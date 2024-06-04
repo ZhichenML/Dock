@@ -23,6 +23,7 @@ class mydataset(data.Dataset):
         self.ncis   = []
         self.lgds   = []
         for line in fl_name:
+            
             lgdPath, pktNciPath, pdbPath = line.strip().split(',', 2)
             self.fnames.append(pdbPath.strip())
             self.ncis.append(pktNciPath.strip())
@@ -34,37 +35,37 @@ class mydataset(data.Dataset):
         return len(self.fnames)
 
     def __getitem__(self, index):
-        while True:
-            try:
-                pdbPath, pktNciPath, lgdPath = self.fnames[index], self.ncis[index], self.lgds[index]
+        
+        try:
+            pdbPath, pktNciPath, lgdPath = self.fnames[index], self.ncis[index], self.lgds[index]
+            
+            pkt_nci_coords = None
+            if os.path.isfile(pktNciPath):
+                pkt_nci_coords = np.load(pktNciPath, allow_pickle=True)
 
-                pkt_nci_coords = None
-                if os.path.isfile(pktNciPath):
-                    pkt_nci_coords = np.load(pktNciPath, allow_pickle=True)
+            lgd_coords = None
+            if os.path.isfile(lgdPath):
+                lgd_coords = self.load_lgd_coords(lgdPath)
 
-                lgd_coords = None
-                if os.path.isfile(lgdPath):
-                    lgd_coords = self.load_lgd_coords(lgdPath)
+            type, residue, mask, new_coords,center, contact, contact_scaffold = self.pocketCode.pocketCodeNCI(pdbPath, center=None, pocket_contact=pkt_nci_coords, lig_pos=lgd_coords)
+            if np.sum(contact) > 0:
+                contact = torch.FloatTensor(contact)
+            else:
+                contact = torch.Tensor([])
 
-                type, residue, mask, new_coords,center, contact, contact_scaffold = self.pocketCode.pocketCodeNCI(pdbPath, center=None, pocket_contact=pkt_nci_coords, lig_pos=lgd_coords)
-                if np.sum(contact) > 0:
-                    contact = torch.FloatTensor(contact)
-                else:
-                    contact = torch.Tensor([])
+            if np.sum(contact_scaffold) > 0:
+                contact_scaffold = torch.FloatTensor(contact_scaffold)
+            else:
+                contact_scaffold = torch.Tensor([])
 
-                if np.sum(contact_scaffold) > 0:
-                    contact_scaffold = torch.FloatTensor(contact_scaffold)
-                else:
-                    contact_scaffold = torch.Tensor([])
+            if np.min(new_coords) < 0 or np.max(new_coords) >= 240:
+                print(f'new coords out of scale {np.min(new_coords)} {np.max(new_coords)}')
+                raise
+            
 
-                if np.min(new_coords) < 0 or np.max(new_coords) >= 240:
-                    print(f'new coords out of scale {np.min(new_coords)} {np.max(new_coords)}')
-                    raise
-                break
-
-            except Exception as e:
-                print(f'there is an exception {e}')
-                index = np.random.randint(0, len(self.fnames))
+        except Exception as e:
+            print(f'there is an exception {e}')
+            index = np.random.randint(0, len(self.fnames))
 
         return torch.LongTensor(new_coords), torch.LongTensor(residue),torch.LongTensor(type), torch.FloatTensor(mask), torch.FloatTensor(center), index, contact, contact_scaffold
 
