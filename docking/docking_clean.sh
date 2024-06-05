@@ -45,7 +45,7 @@ protein_pdbqt=$tmp_dir/${protein_base%.*}.pdbqt
 ligand_pdbqt=$tmp_dir/${ligand_base%.*}.pdbqt
 output_pdbqt=$tmp_dir/${ligand_base%.*}-redock.pdbqt
 
-# Extract bounding box coordinates from the reference ligand
+# Extract bounding box coordinates from the pocket file
 min_x=$(grep "^ATOM" $center_ligand | awk 'NR==1{min=$7} {if($7<min) min=$7} END {print min}')
 max_x=$(grep "^ATOM" $center_ligand | awk 'NR==1{max=$7} {if($7>max) max=$7} END {print max}')
 min_y=$(grep "^ATOM" $center_ligand | awk 'NR==1{min=$8} {if($8<min) min=$8} END {print min}')
