@@ -1,22 +1,23 @@
 #!/bin/bash
 
 # Check if the correct number of arguments is provided
-if [ "$#" -ne 2 ]; then
-  echo "Usage: $0 protein_file ligand_file"
+if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
+  echo "Usage: $0 protein_file ligand_file [remove_dir]"
   exit 1
 fi
 
 # Input files
 protein_file=$1
 ligand_file=$2
-
-# Create a temporary directory for intermediate files
-tmp_dir="./tmp"
-mkdir -p $tmp_dir
+remove_dir=${3:-true}  # Default value is true
 
 # Get the base names of the input files
 protein_base=$(basename $protein_file)
 ligand_base=$(basename $ligand_file)
+
+# Create a temporary directory for intermediate files
+tmp_dir="./tmp" 
+mkdir -p $tmp_dir
 
 # Check and transform ligand file from .mol to .pdb if necessary
 ligand_extension="${ligand_file##*.}"
@@ -25,7 +26,7 @@ if [ "$ligand_extension" = "mol" ]; then
   obabel $ligand_file -O $tmp_dir/$ligand_pdb
   if [ $? -ne 0 ]; then
     echo "Transformation of ligand file from .mol to .pdb failed"
-    rm -r $tmp_dir
+    [[ "$remove_dir" == "true" ]] && rm -r $tmp_dir
     exit 1
   fi
   ligand_file=$tmp_dir/$ligand_pdb
@@ -51,7 +52,7 @@ if [ $? -eq 0 ]; then
   echo "Docking run successful: $output_pdbqt"
 else
   echo "Docking run failed"
-  rm -r $tmp_dir
+  [[ "$remove_dir" == "true" ]] && rm -r $tmp_dir
   exit 1
 fi
 
@@ -65,5 +66,7 @@ else
   echo "Minimized Affinity not found"
 fi
 
-# Clean up the temporary directory
-rm -r $tmp_dir
+# Clean up the temporary directory based on the remove_dir parameter
+if [[ "$remove_dir" == "true" ]]; then
+  rm -r $tmp_dir
+fi
