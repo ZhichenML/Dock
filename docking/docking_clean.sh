@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # Check if the correct number of arguments is provided
-if [ "$#" -lt 3 ] || [ "$#" -gt 4 ]; then
-  echo "Usage: $0 protein_file ligand_file center_ligand [remove_dir]"
+if [ "$#" -lt 9 ] || [ "$#" -gt 10 ]; then
+  echo "Usage: $0 protein_file ligand_file center_ligand center_x center_y center_z size_x size_y size_z [remove_dir]"
   exit 1
 fi
 
@@ -10,14 +10,20 @@ fi
 protein_file=$1
 ligand_file=$2
 center_ligand=$3
-remove_dir=${4:-true}  # Default value is true if not provided
+center_x=$4
+center_y=$5
+center_z=$6
+size_x=$7
+size_y=$8
+size_z=$9
+remove_dir=${10:-true}  # Default value is true if not provided
 
 # Get the base names of the input files
 protein_base=$(basename $protein_file)
 ligand_base=$(basename $ligand_file)
 
 # Create a temporary directory for intermediate files
-tmp_dir="./tmp" 
+tmp_dir="./tmp_${protein_base%.*}" 
 mkdir -p $tmp_dir
 
 # Check and transform ligand file from .mol to .pdb if necessary
@@ -38,27 +44,12 @@ fi
 
 # Convert protein and ligand files to PDBQT format
 obabel $protein_file -xr -O $tmp_dir/${protein_base%.*}.pdbqt
-obabel $ligand_file -O $tmp_dir/${ligand_base%.*}.pdbqt
+obabel $ligand_file -O $tmp_dir/${ligand_base%.*}.pdbqt -h
 
 # Define output filenames based on input filenames
 protein_pdbqt=$tmp_dir/${protein_base%.*}.pdbqt
 ligand_pdbqt=$tmp_dir/${ligand_base%.*}.pdbqt
 output_pdbqt=$tmp_dir/${ligand_base%.*}-redock.pdbqt
-
-# Extract bounding box coordinates from the pocket file
-min_x=$(grep "^ATOM" $center_ligand | awk 'NR==1{min=$7} {if($7<min) min=$7} END {print min}')
-max_x=$(grep "^ATOM" $center_ligand | awk 'NR==1{max=$7} {if($7>max) max=$7} END {print max}')
-min_y=$(grep "^ATOM" $center_ligand | awk 'NR==1{min=$8} {if($8<min) min=$8} END {print min}')
-max_y=$(grep "^ATOM" $center_ligand | awk 'NR==1{max=$8} {if($8>max) max=$8} END {print max}')
-min_z=$(grep "^ATOM" $center_ligand | awk 'NR==1{min=$9} {if($9<min) min=$9} END {print min}')
-max_z=$(grep "^ATOM" $center_ligand | awk 'NR==1{max=$9} {if($9>max) max=$9} END {print max}')
-
-center_x=$(echo "($min_x + $max_x) / 2.0" | bc -l)
-center_y=$(echo "($min_y + $max_y) / 2.0" | bc -l)
-center_z=$(echo "($min_z + $max_z) / 2.0" | bc -l)
-size_x=$(echo "$max_x - $min_x + 8" | bc -l)
-size_y=$(echo "$max_y - $min_y + 8" | bc -l)
-size_z=$(echo "$max_z - $min_z + 8" | bc -l)
 
 # Run smina with the specified parameters
 ./smina.static -r $protein_pdbqt -l $ligand_pdbqt --center_x $center_x --center_y $center_y --center_z $center_z --size_x $size_x --size_y $size_y --size_z $size_z --cpu 64 --exhaustiveness 16 -o $output_pdbqt
