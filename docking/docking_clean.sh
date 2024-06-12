@@ -2,8 +2,8 @@
 
 # Check if the correct number of arguments is provided
 if [ "$#" -lt 9 ] || [ "$#" -gt 10 ]; then
-  echo "Usage: $0 protein_file ligand_file center_ligand center_x center_y center_z size_x size_y size_z [remove_dir]"
-  exit 1
+    echo "Usage: $0 protein_file ligand_file center_ligand center_x center_y center_z size_x size_y size_z [remove_dir]"
+    exit 1
 fi
 
 # Input files
@@ -26,25 +26,52 @@ ligand_base=$(basename "$ligand_file")
 tmp_dir="./tmp_${protein_base%.*}" 
 mkdir -p "$tmp_dir"
 
-# Convert ligand file to .pdbqt format using convert_ligand_to_pdbqt.sh
-./convert_ligand_to_pdbqt.sh "$ligand_file" "$tmp_dir/${ligand_base%.*}.pdbqt"
-if [ $? -ne 0 ]; then
-  echo "Conversion of ligand file to .pdbqt failed"
-  [[ "$remove_dir" == "true" ]] && rm -r "$tmp_dir"
-  exit 1
-fi
-ligand_pdbqt="$tmp_dir/${ligand_base%.*}.pdbqt"
+# Step 1: Process the protein file
+# Remove water molecules (residue name HOH) and add hydrogens to the protein structure
+# obabel "$protein_file" -d -o pdb -O "$tmp_dir/${protein_base%.*}_no_waters.pdb" --filter "resn!=HOH"
+# obabel "$tmp_dir/${protein_base%.*}_no_waters.pdb" -h -xr -O "$tmp_dir/${protein_base%.*}.pdbqt"
+obabel -ipdb "$protein_file" -opdbqt -xr -O "$tmp_dir/${protein_base%.*}.pdbqt" -p 7.4 
 
-# Convert protein file to PDBQT format
-obabel "$protein_file" -xr -O "$tmp_dir/${protein_base%.*}.pdbqt"
+# Step 2: Process the ligand file
+# Convert the ligand file to PDBQT format using OpenBabel
+convert_ligand_to_pdbqt() {
+    input_file=$1
+    output_file=$2
+
+    input_extension="${input_file##*.}"
+
+    case $input_extension in
+        mol)
+            obabel "$input_file" -O "$output_file" --gen3D best -p 7.4 --minimize --ff MMFF94
+            ;;
+        pdb)
+            obabel "$input_file" -O "$output_file" --gen3D best -p 7.4 --minimize --ff MMFF94
+            ;;
+        *)
+            echo "Unsupported file format: $input_extension"
+            return 1
+            ;;
+    esac
+
+    if [ $? -eq 0 ]; then
+        echo "Conversion successful: $output_file"
+        return 0
+    else
+        echo "Conversion failed"
+        return 1
+    fi
+}
+
+convert_ligand_to_pdbqt "$ligand_file" "$tmp_dir/${ligand_base%.*}.pdbqt"
 if [ $? -ne 0 ]; then
-  echo "Conversion of protein file to .pdbqt failed"
-  [[ "$remove_dir" == "true" ]] && rm -r "$tmp_dir"
-  exit 1
+    echo "Conversion of ligand file to .pdbqt failed"
+    [[ "$remove_dir" == "true" ]] && rm -r "$tmp_dir"
+    exit 1
 fi
+
+# Define output filenames based on input filenames
 protein_pdbqt="$tmp_dir/${protein_base%.*}.pdbqt"
-
-# Define output filename based on input filenames
+ligand_pdbqt="$tmp_dir/${ligand_base%.*}.pdbqt"
 output_pdbqt="$tmp_dir/${ligand_base%.*}-redock.pdbqt"
 
 # Run smina with the specified parameters
@@ -52,11 +79,11 @@ output_pdbqt="$tmp_dir/${ligand_base%.*}-redock.pdbqt"
 
 # Confirm the docking run
 if [ $? -eq 0 ]; then
-  echo "Docking run successful: $output_pdbqt"
+    echo "Docking run successful: $output_pdbqt"
 else
-  echo "Docking run failed"
-  [[ "$remove_dir" == "true" ]] && rm -r "$tmp_dir"
-  exit 1
+    echo "Docking run failed"
+    [[ "$remove_dir" == "true" ]] && rm -r "$tmp_dir"
+    exit 1
 fi
 
 # Extract minimizedAffinity from the output PDBQT file
@@ -64,12 +91,12 @@ minimized_affinity=$(grep -m 1 'REMARK minimizedAffinity' "$output_pdbqt" | awk 
 
 # Output the minimized affinity
 if [ -n "$minimized_affinity" ]; then
-  echo "Minimized Affinity: $minimized_affinity"
+    echo "Minimized Affinity: $minimized_affinity"
 else
-  echo "Minimized Affinity not found"
+    echo "Minimized Affinity not found"
 fi
 
 # Clean up the temporary directory based on the remove_dir parameter
 if [[ "$remove_dir" == "true" ]]; then
-  rm -r "$tmp_dir"
+    rm -r "$tmp_dir"
 fi

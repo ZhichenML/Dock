@@ -48,27 +48,39 @@ def revise_ligand_batch(fpath= '/public/home/gongzhichen/code/Lingo3DMol/data/ou
             
     return
 
+
+import statistics
+
 def calculate_center_size(center_ligand):
-    min_x, max_x, min_y, max_y, min_z, max_z = [float('inf')], [float('-inf')], [float('inf')], [float('-inf')], [float('inf')], [float('-inf')]
+    x_coords, y_coords, z_coords = [], [], []
+
     with open(center_ligand, 'r') as f:
         for line in f:
-            if line.startswith('ATOM'):
+            if line.startswith('HETATM'):
                 x = float(line[30:38])
                 y = float(line[38:46])
                 z = float(line[46:54])
-                min_x[0] = min(min_x[0], x)
-                max_x[0] = max(max_x[0], x)
-                min_y[0] = min(min_y[0], y)
-                max_y[0] = max(max_y[0], y)
-                min_z[0] = min(min_z[0], z)
-                max_z[0] = max(max_z[0], z)
-    center_x = (min_x[0] + max_x[0]) / 2.0
-    center_y = (min_y[0] + max_y[0]) / 2.0
-    center_z = (min_z[0] + max_z[0]) / 2.0
-    size_x = max_x[0] - min_x[0] + 10
-    size_y = max_y[0] - min_y[0] + 10
-    size_z = max_z[0] - min_z[0] + 10
+                x_coords.append(x)
+                y_coords.append(y)
+                z_coords.append(z)
+
+    if not x_coords or not y_coords or not z_coords:
+        raise ValueError("No HETATM records found in the provided ligand file.")
+
+    center_x = statistics.mean(x_coords)
+    center_y = statistics.mean(y_coords)
+    center_z = statistics.mean(z_coords)
+
+    size_x = max(x_coords) - min(x_coords) + 8
+    size_y = max(y_coords) - min(y_coords) + 8
+    size_z = max(z_coords) - min(z_coords) + 8
+
     return center_x, center_y, center_z, size_x, size_y, size_z
+
+# Example usage:
+# center_x, center_y, center_z, size_x, size_y, size_z = calculate_center_size('center_ligand.pdb')
+# print(center_x, center_y, center_z, size_x, size_y, size_z)
+
 
 def run_docking(protein_file, ligand_file, pocket_file, center_x, center_y, center_z, size_x, size_y, size_z, remove_tmp_files=True):
     
@@ -109,6 +121,7 @@ def calculate_docking_scores(protein_file, ligand_folder, pocket_file, center_x,
     for ligand_file in tqdm.tqdm(all_ligand_files):
         ligand_path = os.path.join(ligand_folder, ligand_file)
         if os.path.isfile(ligand_path) and ligand_file.endswith('.mol'):
+            
             minimized_affinity = run_docking(protein_file, ligand_path, pocket_file, center_x, center_y, center_z, size_x, size_y, size_z)
             if minimized_affinity != "Minimized Affinity not found":
                 docking_results.append((ligand_file, float(minimized_affinity)))
@@ -210,35 +223,7 @@ def convert_pdbqt_to_pdb(input_file, output_file):
 
 def main():
 
-    # compound_name = 'GLP1_6xox_lily'
-    # base_dir = '/public/home/gongzhichen/code/Lingo3DMol/data'
-
-    # receptor_folder = os.path.join(os.path.join(base_dir, 'input/receptors'), compound_name)
-    # protein_file = os.path.join(receptor_folder, compound_name + '_protein.pdb')
-    # pocket_file = os.path.join(receptor_folder, compound_name + '_pocket.pdb')
-    # ligand_ref_file = os.path.join(receptor_folder, compound_name + '_ligand.pdb')
-
-    # ligand_folder = os.path.join(os.path.join(base_dir, 'output/Generated_Ligands'), compound_name + '_pocket.pdb')
-
-    # if not os.path.isdir(ligand_folder + '.revise'):
-    #     revise_ligand_batch(ligand_folder)
-    #     print("Generating revised ligand files")
-    # ligand_folder = ligand_folder + '.revise'
-
-    # output_file = os.path.join(ligand_folder, 'docking_results.csv')
-    # output_image_base = os.path.join(receptor_folder, 'docking_result')
-
-    # parser = argparse.ArgumentParser(description="Calculate docking scores and visualize results with PyMOL.")
-    # parser.add_argument('--protein_file', default=protein_file, help='Path to the protein PDB file')
-    # parser.add_argument('--pocket_file', default=pocket_file, help='Path to the pocket PDB file')
-    # parser.add_argument('--ligand_ref_file', default=ligand_ref_file, help='Path to the reference ligand PDB file')
-    # parser.add_argument('--ligand_folder', default=ligand_folder, help='Folder containing ligand files')
-    # parser.add_argument('--output_file', default=output_file, help='Path to save the docking results CSV')
-    # parser.add_argument('--output_image_base', default=output_image_base, help='Base name for the output image files')
-
-    # args = parser.parse_args()
-
-    compound_name = 'GLP1_6x1a'
+    compound_name = 'GLP1_6xox_lily'
     base_dir = '/public/home/gongzhichen/code/Lingo3DMol/data'
 
     receptor_folder = os.path.join(os.path.join(base_dir, 'input/receptors'), compound_name)
@@ -281,8 +266,12 @@ def main():
 
     start_time = time.time()
     os.system(f'cp {args.ligand_ref_file} {os.path.join(args.ligand_folder, os.path.basename(args.ligand_ref_file))}')
-    center_x, center_y, center_z, size_x, size_y, size_z = calculate_center_size(pocket_file)
-   
+    center_x, center_y, center_z, size_x, size_y, size_z = calculate_center_size(args.ligand_ref_file)
+    print(f"Center: ({center_x:.2f}, {center_y:.2f}, {center_z:.2f}), Size: ({size_x:.2f}, {size_y:.2f}, {size_z:.2f})")
+    size_x = 30
+    size_y = 30
+    size_z = 30
+    
     print('Starting docking')
     
     # step 1: calculate docking scores and save results
@@ -301,10 +290,11 @@ def main():
 
     # step 2: use docking_results for visualization
     top_10_ligands = [os.path.join(args.ligand_folder, ligand) for ligand, _ in docking_results[:11]]
+    # top_10_ligands= [os.path.join(args.ligand_folder, "701_pred_5_GLP1_6xox_lily_pocket.pdb.mol")]
     # copy the reference ligand to the ligand directory if it does not exist
 
     top_10_ligands += [os.path.join(os.path.join(receptor_folder, 'homemade'), f'compound{i}.pdb') 
-                       for i in range(1,8)]
+                       for i in range(1,5)]
     
 
     
@@ -321,6 +311,7 @@ def main():
     # top_10_ligands_redock[0] = top_10_ligands_redock[0].replace('.pdb', '-redock.pdbqt') # the reference ligand is is pdb format
     ligand_pdb_files = []
     for ligand_file, ligand_file_redock in zip(top_10_ligands, top_10_ligands_redock):
+        
         if not os.path.isfile(ligand_file_redock):
             
             print(f"Re-docking {os.path.basename(ligand_file)} to {os.path.basename(ligand_file_redock)}")
