@@ -21,6 +21,7 @@ remove_dir=${10:-true}  # Default value is true if not provided
 # Get the base names of the input files
 protein_base=$(basename "$protein_file")
 ligand_base=$(basename "$ligand_file")
+echo ligand_base
 
 # Create a temporary directory for intermediate files
 tmp_dir="./tmp_${protein_base%.*}" 
@@ -42,10 +43,10 @@ convert_ligand_to_pdbqt() {
 
     case $input_extension in
         mol)
-            obabel "$input_file" -O "$output_file" --gen3D best -p 7.4 --minimize --ff MMFF94
+            obabel "$input_file" -O "$output_file" --gen3D best -p 7.4 --minimize --ff MMFF94 
             ;;
         pdb)
-            obabel "$input_file" -O "$output_file" --gen3D best -p 7.4 --minimize --ff MMFF94
+            obabel "$input_file" -O "$output_file" --gen3D best -p 7.4 --minimize --ff MMFF94 
             ;;
         *)
             echo "Unsupported file format: $input_extension"

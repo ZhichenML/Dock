@@ -7,6 +7,8 @@ import pandas as pd
 import yaml
 from rdkit import Chem
 from rdkit.Chem import AllChem
+import rdkit
+from rdkit import Chem
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 
@@ -18,14 +20,10 @@ def load_config(config_path):
     return config
 
 
-def revise_ligand_batch(fpath= '/public/home/gongzhichen/code/Lingo3DMol/data/output/Generated_Ligands/GLP1_6xox_lily_pocket.pdb'):
+def revise_ligand_batch(fpath, new_path):
     # fpath : ligand folder path
     ligand_files = os.listdir(fpath)
-    
-    new_path = fpath+'.revise'
-    if os.path.exists(new_path):
-        os.system('rm -rf {}'.format(new_path))
-    os.makedirs(new_path, exist_ok=True)
+
     for ligand_file in ligand_files:
         if ligand_file.endswith('.mol'):
             with open(os.path.join(fpath, ligand_file), 'r') as f:
@@ -45,7 +43,33 @@ def revise_ligand_batch(fpath= '/public/home/gongzhichen/code/Lingo3DMol/data/ou
                 # with open(new_ligand_file, 'w') as f:
                 #     f.write(''.join(xyz))
                 Chem.MolToMolFile(Chem.RemoveHs(mol), new_ligand_file)
+        
+        elif ligand_file.endswith('.pdb'):
+            # mol = rdkit.Chem.rdmolfiles.MolFromPDBFile(ligand_file)
+            mol = Chem.MolFromPDBFile(ligand_file)
             
+            if mol is None:
+                raise ValueError(f"Could not load molecule from PDB file: {ligand_file}")
+            
+            # Generate SMILES
+            smile = Chem.MolToSmiles(mol)
+
+
+            mol = Chem.MolFromSmiles(smile, sanitize=True)
+            mol = Chem.RWMol(mol)
+            if mol is not None:
+                for atom in mol.GetAtoms():
+                    atom_type = atom.GetSymbol()
+                    if atom_type == '*':
+                        mol.ReplaceAtom(atom.GetIdx(),Chem.Atom('H'))
+                
+                # xyz, mol = smi2xyz(mol)
+                # ligand_file = ligand_file.replace('.mol', '.xyz')
+                new_ligand_file = os.path.join(new_path, ligand_file.replace('.pdb', '.mol'))
+                # with open(new_ligand_file, 'w') as f:
+                #     f.write(''.join(xyz))
+                Chem.MolToMolFile(Chem.RemoveHs(mol), new_ligand_file)
+
     return
 
 
@@ -118,6 +142,7 @@ def calculate_docking_scores(protein_file, ligand_folder, pocket_file, center_x,
     docking_results = []
 
     all_ligand_files = os.listdir(ligand_folder)
+    print(f"Calculating docking scores for {len(all_ligand_files)} ligands")
     for ligand_file in tqdm.tqdm(all_ligand_files):
         ligand_path = os.path.join(ligand_folder, ligand_file)
         if os.path.isfile(ligand_path) and ligand_file.endswith('.mol'):
@@ -153,7 +178,7 @@ color red, ligand_ref
 color palegreen, pocket
 """
     for i, (ligand_file, ligand_file_redock) in enumerate(zip(ligand_files, ligand_files_redock), start=0):
-        if i != 0:
+        # if i != 0:
             script_content += f"""
     # Load ligand {i}
     load {ligand_file}, ligand{i}_{os.path.basename(ligand_file).split('.')[0]}
@@ -165,13 +190,13 @@ color palegreen, pocket
     show sticks, ligand_redock{i}
     color cyan, ligand_redock{i}
     """
-        elif i == 0:
-            script_content += f"""
-    # Load redocked pose of ligand {i}
-    load {ligand_file_redock}, ligand_ref_redock
-    show sticks, ligand_ref_redock
-    color blue, ligand_ref_redock
-    """
+    #     elif i == 0:
+    #         script_content += f"""
+    # # Load redocked pose of ligand {i}
+    # load {ligand_file_redock}, ligand_ref_redock
+    # show sticks, ligand_ref_redock
+    # color blue, ligand_ref_redock
+    # """
     script_content += f"""
 # Create a selection that includes pocket, ligands, and ligand_ref
 select pocket_ligand_combined, pocket or ligand* or ligand_ref
@@ -233,12 +258,20 @@ def main():
 
     ligand_folder = os.path.join(os.path.join(base_dir, 'output/Generated_Ligands'), compound_name + '_pocket.pdb')
 
-    if not os.path.isdir(ligand_folder + '.revise'):
-        revise_ligand_batch(ligand_folder)
-        print("Generating revised ligand files")
-    ligand_folder = ligand_folder + '.revise'
+    # if not os.path.isdir(ligand_folder + '.revise'):
+    new_path = ligand_folder + '.revise'
+    if os.path.exists(new_path):
+        os.system('rm -rf {}'.format(new_path))
+    os.makedirs(new_path, exist_ok=True)
+    os.system(f'cp {ligand_ref_file} {os.path.join(new_path, os.path.basename(ligand_ref_file))}')
 
-    output_file = os.path.join(ligand_folder, 'docking_results.csv')
+    revise_ligand_batch(ligand_folder, new_path)
+    print("Generating revised ligand files")
+    import pdb; pdb.set_trace()
+    ligand_folder = ligand_folder + '.revise'
+    
+
+    output_file = os.path.join(receptor_folder, 'docking_results.csv')
     output_image_base = os.path.join(receptor_folder, 'docking_result')
 
     parser = argparse.ArgumentParser(description="Calculate docking scores and visualize results with PyMOL.")
@@ -265,7 +298,7 @@ def main():
         exit(1)
 
     start_time = time.time()
-    os.system(f'cp {args.ligand_ref_file} {os.path.join(args.ligand_folder, os.path.basename(args.ligand_ref_file))}')
+    
     center_x, center_y, center_z, size_x, size_y, size_z = calculate_center_size(args.ligand_ref_file)
     print(f"Center: ({center_x:.2f}, {center_y:.2f}, {center_z:.2f}), Size: ({size_x:.2f}, {size_y:.2f}, {size_z:.2f})")
     size_x = 30
@@ -279,8 +312,8 @@ def main():
     if not os.path.isfile(args.output_file):
         docking_results = calculate_docking_scores(args.protein_file, args.ligand_folder, args.pocket_file, center_x, center_y, center_z, size_x, size_y, size_z)
         
-        minimized_affinity = run_docking(args.protein_file, args.ligand_ref_file, args.pocket_file, center_x, center_y, center_z, size_x, size_y, size_z)
-        docking_results.insert(0, (os.path.basename(args.ligand_ref_file), float(minimized_affinity)))
+        # minimized_affinity = run_docking(args.protein_file, args.ligand_ref_file, args.pocket_file, center_x, center_y, center_z, size_x, size_y, size_z)
+        # docking_results.insert(0, (os.path.basename(args.ligand_ref_file), float(minimized_affinity)))
         
         save_docking_results(docking_results, args.output_file)
     else:
@@ -300,9 +333,10 @@ def main():
     
     # show redocking poses
     
-    print('Starting re-docking')
+    print('Starting re-docking for visualization')
     # check redock files exist
-    tmp_file = 'tmp_' + os.path.splitext(os.path.basename(args.protein_file))[0] 
+    tmp_file = 'tmp_' + os.path.splitext(os.path.basename(args.protein_file))[0]
+    print(f"Saving temporary files to {tmp_file}")
     
     top_10_ligands_redock = [os.path.join(tmp_file, os.path.basename(ligand).replace('.mol', '-redock.pdbqt')) if ligand.endswith('.mol') 
                              else os.path.join(tmp_file, os.path.basename(ligand).replace('.pdb', '-redock.pdbqt')) 
