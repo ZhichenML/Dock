@@ -8,9 +8,10 @@ import yaml
 from rdkit import Chem
 from rdkit.Chem import AllChem
 import rdkit
-from rdkit import Chem
+from rdkit.Chem import rdMolTransforms
+import os.path as osp
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
-
+smina_bin = '/public/home/gongzhichen/code/Lingo3DMol/docking/smina.static'
 
 import ligand2center
 
@@ -19,59 +20,154 @@ def load_config(config_path):
         config = yaml.safe_load(file)
     return config
 
+def pdb_to_smiles(pdb_file):
+    # Read the PDB file into an RDKit molecule
+    mol = Chem.MolFromPDBFile(pdb_file, sanitize=True)
+    if mol is None:
+        raise ValueError(f"Could not read molecule from PDB file: {pdb_file}")
+    
+    # Generate SMILES string from the molecule
+    smiles = Chem.MolToSmiles(mol)
+    return smiles
 
-def revise_ligand_batch(fpath, new_path):
+def smiles_to_3d_pdb(smiles, pdb_filename):
+    # Convert SMILES to a molecule
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        raise ValueError("Invalid SMILES string")
+
+    # Add hydrogens
+    mol = Chem.AddHs(mol)
+
+    # Generate 3D coordinates
+    AllChem.EmbedMolecule(mol, AllChem.ETKDG())
+    AllChem.UFFOptimizeMolecule(mol)
+
+    # Write to PDB file
+    with open(pdb_filename, 'w') as f:
+        f.write(Chem.MolToPDBBlock(mol))
+
+# # Example usage
+# smiles = "O=C(Nc1cccc(Cl)c1)c1ccc(C(=O)NCCN2CCOC(C(=O)Nc3ccc(F)cc3)n2)c(NCc2cccc3ccccc23)n1"  # Ethanol
+# pdb_filename = "ethanol.pdb"
+# smiles_to_3d_pdb(smiles, pdb_filename)
+
+
+def smiles_to_3d_pdb_batch(fpath, new_path):
+    # mol (smiles) to pdb
     # fpath : ligand folder path
     ligand_files = os.listdir(fpath)
 
     for ligand_file in ligand_files:
         if ligand_file.endswith('.mol'):
             with open(os.path.join(fpath, ligand_file), 'r') as f:
-                smile = f.readlines()[0]
+                smile = f.readline().strip()
             
-            mol = Chem.MolFromSmiles(smile, sanitize=True)
-            mol = Chem.RWMol(mol)
-            if mol is not None:
-                for atom in mol.GetAtoms():
-                    atom_type = atom.GetSymbol()
-                    if atom_type == '*':
-                        mol.ReplaceAtom(atom.GetIdx(),Chem.Atom('H'))
+            pdb_filename = os.path.join(new_path, ligand_file.strip('.mol')) 
+
+            if not '*' in smile:
+                smiles_to_3d_pdb(smile, pdb_filename)
+            else:
+                mol = Chem.MolFromSmiles(smile, sanitize=False)
+                if mol is not None:
+                    rw_mol = Chem.RWMol(mol)
                 
-                # xyz, mol = smi2xyz(mol)
-                # ligand_file = ligand_file.replace('.mol', '.xyz')
-                new_ligand_file = os.path.join(new_path, ligand_file)
-                # with open(new_ligand_file, 'w') as f:
-                #     f.write(''.join(xyz))
-                Chem.MolToMolFile(Chem.RemoveHs(mol), new_ligand_file)
+                    for atom in rw_mol.GetAtoms():
+                        atom_type = atom.GetSymbol()
+                        if atom_type == '*':
+                            rw_mol.ReplaceAtom(atom.GetIdx(),Chem.Atom('H'))
+                    
+                    # Add hydrogens
+                    mol = rw_mol.GetMol()
+                    Chem.SanitizeMol(mol)
+
+                    mol = Chem.AddHs(mol)
+
+                    # Generate 3D coordinates
+                    AllChem.EmbedMolecule(mol, AllChem.ETKDG())
+                    AllChem.UFFOptimizeMolecule(mol)
+
+                    # Write to PDB file
+                    with open(pdb_filename, 'w') as f:
+                        f.write(Chem.MolToPDBBlock(mol))
         
-        elif ligand_file.endswith('.pdb'):
-            # mol = rdkit.Chem.rdmolfiles.MolFromPDBFile(ligand_file)
-            mol = Chem.MolFromPDBFile(ligand_file)
-            
-            if mol is None:
-                raise ValueError(f"Could not load molecule from PDB file: {ligand_file}")
-            
-            # Generate SMILES
-            smile = Chem.MolToSmiles(mol)
-
-
-            mol = Chem.MolFromSmiles(smile, sanitize=True)
-            mol = Chem.RWMol(mol)
-            if mol is not None:
-                for atom in mol.GetAtoms():
-                    atom_type = atom.GetSymbol()
-                    if atom_type == '*':
-                        mol.ReplaceAtom(atom.GetIdx(),Chem.Atom('H'))
-                
-                # xyz, mol = smi2xyz(mol)
-                # ligand_file = ligand_file.replace('.mol', '.xyz')
-                new_ligand_file = os.path.join(new_path, ligand_file.replace('.pdb', '.mol'))
-                # with open(new_ligand_file, 'w') as f:
-                #     f.write(''.join(xyz))
-                Chem.MolToMolFile(Chem.RemoveHs(mol), new_ligand_file)
-
     return
 
+def prepare_ligand(ligand_file, out_file=None, verbose=0):
+    
+    ligand_name = osp.basename(ligand_file)
+    if ligand_name.endswith('.pdb'):
+        ligand_pdb_file = ligand_file
+    else:
+        raise ValueError('Unsupported ligand file format: {}'.format(ligand_file))
+    
+    if out_file is None:
+        out_file = ligand_pdb_file + 'qt'
+    if osp.exists(out_file):
+        return out_file
+    
+    # prepare_target4.py cannot identify the absolute or relative path, so we need to cd to the ligand_mol2_dir and perform the prepare_liagnd
+    ligand_dir, ligand_pdb_name = osp.dirname(ligand_pdb_file), osp.basename(ligand_pdb_file)
+    out_file_name = osp.basename(out_file)
+
+    command = f'cd {ligand_dir} && prepare_ligand4.py -l {ligand_pdb_name} -A hydrogens -o {out_file_name}'
+    try:
+        result = subprocess.run(command, shell=True, capture_output=True, text=True)
+    except subprocess.CalledProcessError as e:
+        print(f"Error running docking: {e}")
+        print(e.stdout)
+        print(e.stderr)
+ 
+    if verbose:
+        if result.returncode == 0:
+            print('prepare the ligand successfully:', out_file)
+        else:
+            print('prepare the ligand failed:', result.stderr)
+    pdbqt_file = osp.join(ligand_dir, out_file_name)
+    command = f'mv {pdbqt_file} {out_file}'
+    subprocess.run(command, shell=True, capture_output=True, text=True)
+
+    return out_file
+
+
+
+
+def prepare_ligand_batch(ligand_folder, out_folder=None, verbose=0):
+    if out_folder is None:
+        out_folder = ligand_folder + '_pdbqt'
+        if not osp.exists(out_folder):
+            os.mkdir(out_folder)
+    
+    all_ligand_files = os.listdir(ligand_folder)
+    for ligand_file in all_ligand_files:
+        if ligand_file.endswith('.pdb'):
+            
+            ligand_pdb_file = os.path.join(ligand_folder, ligand_file)
+            prepare_ligand(ligand_file=ligand_pdb_file, out_file=os.path.join(out_folder, ligand_file+ 'qt'), verbose=verbose)
+
+
+
+    return out_folder
+
+def prepare_target(protein_file, out_file=None, verbose=1):
+    if out_file is None:
+        out_file = protein_file + 'qt'
+    if osp.exists(out_file):
+        return out_file
+    
+    command = f'prepare_receptor4.py -r {protein_file} -o {out_file}'
+    if osp.exists(protein_file+'qt'):
+        return protein_file+'qt'
+        
+    result = subprocess.run(command, shell=True, capture_output=True, text=True)
+    
+    if verbose:
+        if result.returncode == 0:
+            print('prepare the target successfully:', out_file)
+        else:
+            print('prepare the target failed:', result.stderr)
+
+    return out_file
 
 import statistics
 
@@ -138,6 +234,110 @@ def run_docking(protein_file, ligand_file, pocket_file, center_x, center_y, cent
         print(e.stderr)
         return None
 
+def docking_with_smina(protein_pdbqt, lig_pdbqt, centroid, verbose=0, out_lig_sdf=None, save_pdbqt=True):
+    
+    cx, cy, cz = centroid
+
+    protein_base = os.path.basename(protein_pdbqt)
+    ligand_base = os.path.basename(lig_pdbqt)
+    
+    # Create a temporary directory for intermediate files
+    tmp_dir = f"../data/tmp/tmp_{os.path.splitext(protein_base)[0]}"
+    os.makedirs(tmp_dir, exist_ok=True)
+    
+    # Define output filenames based on input filenames
+    out_lig_pdbqt = os.path.join(tmp_dir, f"{os.path.splitext(ligand_base)[0]}_smina.pdbqt")
+    
+    if out_lig_sdf is None:
+        out_lig_sdf = os.path.join(tmp_dir, ligand_base.replace('.pdbqt', '_smina.sdf')   )
+    
+    
+    if not osp.exists(protein_pdbqt) or not osp.exists(lig_pdbqt):
+        print(lig_pdbqt)
+        raise NotImplementedError('no pdbqt file found')
+    
+    command = '''{smina_bin} \
+        --receptor {receptor_pre} \
+        --ligand {ligand_pre} \
+        --center_x {centroid_x:.4f} \
+        --center_y {centroid_y:.4f} \
+        --center_z {centroid_z:.4f} \
+        --size_x 30 --size_y 30 --size_z 30 \
+        --cpu {cpu} \
+        --out {out_lig_pdbqt} \
+        --exhaustiveness {exhaust}
+        obabel {out_lig_pdbqt} -O {out_lig_sdf} -h'''.format(smina_bin=smina_bin,
+                                            receptor_pre = protein_pdbqt,
+                                            ligand_pre = lig_pdbqt,
+                                            centroid_x = cx,
+                                            centroid_y = cy,
+                                            centroid_z = cz,
+                                            cpu = 64,
+                                            out_lig_pdbqt = out_lig_pdbqt,
+                                            exhaust = 8,
+                                            out_lig_sdf = out_lig_sdf)
+    try: 
+        dock_result = subprocess.run(command, shell=True, capture_output=True, text=True)
+        print(f"Docking with SMINA successful: {dock_result.stdout}")
+        
+                
+    except subprocess.CalledProcessError as e:
+        print(f"Error running docking: {e}")
+        
+        print(e.stderr.decode())
+        return None
+
+    # Extract minimizedAffinity from the output PDBQT file
+    minimized_affinity = None
+    try:
+        with open(out_lig_pdbqt, 'r') as file:
+            for line in file:
+                if line.startswith('REMARK minimizedAffinity'):
+                    minimized_affinity = line.split()[2]
+                    break
+    except FileNotFoundError:
+        print(f"Output PDBQT file not found: {out_lig_pdbqt}")
+
+    # Output the minimized affinity
+    if minimized_affinity:
+        print(f"Minimized Affinity: {minimized_affinity}")
+    else:
+        print("Minimized Affinity not found")    
+
+    if verbose:
+        if dock_result.returncode == 0:
+            print('docking successfully:', out_lig_sdf)
+        else:
+            print('docking failed:', dock_result.stderr)
+    
+    if not save_pdbqt:
+        os.remove(out_lig_pdbqt)
+    process_sdf(out_lig_sdf)
+    return minimized_affinity
+
+def docking_smina_batch(protein_pdbqt, ligand_folder, center_x, center_y, center_z, size_x, size_y, size_z, verbose=0, save_pdbqt=False):
+    all_ligand_files = os.listdir(ligand_folder)
+    print(f"Calculating docking scores for {len(all_ligand_files)} ligands")
+    centroid = (center_x, center_y, center_z)
+    docking_results = []
+
+    for ligand_file in tqdm.tqdm(all_ligand_files):
+        if ligand_file.endswith('.pdbqt'):
+            ligand_path = os.path.join(ligand_folder, ligand_file)
+           
+            minimized_affinity = docking_with_smina(protein_pdbqt, ligand_path, centroid, verbose=verbose, save_pdbqt=save_pdbqt)
+            if minimized_affinity != None:
+                docking_results.append((ligand_file, float(minimized_affinity)))
+            else:
+                print(f"Skipping {ligand_file} due to 'Minimized Affinity not found'")
+
+        else:
+            print(f"Skipping {ligand_file} due to invalid file format")
+    
+    docking_results.sort(key=lambda x: x[1])
+
+    return docking_results
+
 def calculate_docking_scores(protein_file, ligand_folder, pocket_file, center_x, center_y, center_z, size_x, size_y, size_z):
     docking_results = []
 
@@ -145,13 +345,16 @@ def calculate_docking_scores(protein_file, ligand_folder, pocket_file, center_x,
     print(f"Calculating docking scores for {len(all_ligand_files)} ligands")
     for ligand_file in tqdm.tqdm(all_ligand_files):
         ligand_path = os.path.join(ligand_folder, ligand_file)
-        if os.path.isfile(ligand_path) and ligand_file.endswith('.mol'):
+        if os.path.isfile(ligand_path) and ligand_file.endswith('.pdbqt'):
             
             minimized_affinity = run_docking(protein_file, ligand_path, pocket_file, center_x, center_y, center_z, size_x, size_y, size_z)
             if minimized_affinity != "Minimized Affinity not found":
                 docking_results.append((ligand_file, float(minimized_affinity)))
             else:
                 print(f"Skipping {ligand_file} due to 'Minimized Affinity not found'")
+        else:
+            print(f"Skipping {ligand_file} due to invalid file format")
+
     docking_results.sort(key=lambda x: x[1])
     return docking_results
 
@@ -241,6 +444,16 @@ def convert_pdbqt_to_pdb(input_file, output_file):
     except subprocess.CalledProcessError as e:
         print(f"Error: {e.stderr}")
 
+from chem import read_sdf, write_sdf, sdf2centroid, sdf2mol2, pdb2centroid
+def process_sdf(sdf_file):
+    mols = read_sdf(sdf_file)
+    for mol in mols:
+        affin = mol.GetProp('REMARK').splitlines()[0].split()[1]
+        smina_remark = f'SMINA RESULT:      {affin}      0.000      0.000'
+        mol.SetProp('REMARK', smina_remark)
+    write_sdf(mols, sdf_file)
+
+
 
 
 
@@ -258,18 +471,27 @@ def main():
 
     ligand_folder = os.path.join(os.path.join(base_dir, 'output/Generated_Ligands'), compound_name + '_pocket.pdb')
 
-    # if not os.path.isdir(ligand_folder + '.revise'):
-    new_path = ligand_folder + '.revise'
-    if os.path.exists(new_path):
-        os.system('rm -rf {}'.format(new_path))
-    os.makedirs(new_path, exist_ok=True)
-    os.system(f'cp {ligand_ref_file} {os.path.join(new_path, os.path.basename(ligand_ref_file))}')
+    new_path = ligand_folder + '_mol2pdb'
+    if not os.path.isdir(new_path):
+        
+        if os.path.exists(new_path):
+            os.system('rm -rf {}'.format(new_path))
+        os.makedirs(new_path, exist_ok=True)
+        os.system(f'cp {ligand_ref_file} {os.path.join(new_path, os.path.basename(ligand_ref_file))}')
 
-    revise_ligand_batch(ligand_folder, new_path)
-    print("Generating revised ligand files")
-    import pdb; pdb.set_trace()
-    ligand_folder = ligand_folder + '.revise'
+        smiles_to_3d_pdb_batch(ligand_folder, new_path)
+        print("Step 1: \nGenerating pdb ligand files from SMILES successful")
     
+    ligand_folder = new_path
+
+    pdbqt_folder = ligand_folder + '_pdbqt'
+    if not os.path.isdir(pdbqt_folder):
+        os.makedirs(pdbqt_folder, exist_ok=True)
+        prepare_ligand_batch(ligand_folder, pdbqt_folder)
+    
+    prepare_target(protein_file)
+    protein_file = protein_file + 'qt'
+    print('Prepare the target and Ligand successfully')
 
     output_file = os.path.join(receptor_folder, 'docking_results.csv')
     output_image_base = os.path.join(receptor_folder, 'docking_result')
@@ -278,7 +500,7 @@ def main():
     parser.add_argument('--protein_file', default=protein_file, help='Path to the protein PDB file')
     parser.add_argument('--pocket_file', default=pocket_file, help='Path to the pocket PDB file')
     parser.add_argument('--ligand_ref_file', default=ligand_ref_file, help='Path to the reference ligand PDB file')
-    parser.add_argument('--ligand_folder', default=ligand_folder, help='Folder containing ligand files')
+    parser.add_argument('--ligand_folder', default=pdbqt_folder, help='Folder containing ligand files')
     parser.add_argument('--output_file', default=output_file, help='Path to save the docking results CSV')
     parser.add_argument('--output_image_base', default=output_image_base, help='Base name for the output image files')
 
@@ -305,58 +527,59 @@ def main():
     size_y = 30
     size_z = 30
     
-    print('Starting docking')
+    print('Step2: \nStarting docking')
     
     # step 1: calculate docking scores and save results
     # mol->pdb->pdbqt->redock.pdbqt->pdb
+    
     if not os.path.isfile(args.output_file):
-        docking_results = calculate_docking_scores(args.protein_file, args.ligand_folder, args.pocket_file, center_x, center_y, center_z, size_x, size_y, size_z)
         
-        # minimized_affinity = run_docking(args.protein_file, args.ligand_ref_file, args.pocket_file, center_x, center_y, center_z, size_x, size_y, size_z)
-        # docking_results.insert(0, (os.path.basename(args.ligand_ref_file), float(minimized_affinity)))
-        
+        docking_results = docking_smina_batch(args.protein_file, args.ligand_folder, center_x, center_y, center_z, size_x, size_y, size_z, verbose=1, save_pdbqt=True)
+    
         save_docking_results(docking_results, args.output_file)
     else:
         print("Using existing docking results file")
         df = pd.read_csv(args.output_file)
-        docking_results = [(row['Ligand File'], row['Minimized Affinity']) for _, row in df.iterrows()]
+        docking_results = [(row['Ligand File'].replace('.mol', '.pdbqt'), row['Minimized Affinity']) for _, row in df.iterrows()]
 
     # step 2: use docking_results for visualization
-    top_10_ligands = [os.path.join(args.ligand_folder, ligand) for ligand, _ in docking_results[:11]]
+    top_10_ligands = [os.path.join(args.ligand_folder, ligand) for ligand, _ in docking_results[:21]]
     # top_10_ligands= [os.path.join(args.ligand_folder, "701_pred_5_GLP1_6xox_lily_pocket.pdb.mol")]
     # copy the reference ligand to the ligand directory if it does not exist
-
-    top_10_ligands += [os.path.join(os.path.join(receptor_folder, 'homemade'), f'compound{i}.pdb') 
-                       for i in range(1,5)]
     
-
+    # homemade_folder = os.path.join(os.path.join(receptor_folder, 'homemade'))
+    # homemade_files = os.listdir(homemade_folder)
     
+    # prepare_ligand_batch(homemade_folder, args.ligand_folder)
+    # top_10_ligands += [os.path.join(args.ligand_folder, v+'qt') for v in homemade_files]
+
     # show redocking poses
     
     print('Starting re-docking for visualization')
     # check redock files exist
-    tmp_file = 'tmp_' + os.path.splitext(os.path.basename(args.protein_file))[0]
+    tmp_file = '../data/tmp/tmp_' + os.path.splitext(os.path.basename(args.protein_file))[0]
     print(f"Saving temporary files to {tmp_file}")
     
-    top_10_ligands_redock = [os.path.join(tmp_file, os.path.basename(ligand).replace('.mol', '-redock.pdbqt')) if ligand.endswith('.mol') 
-                             else os.path.join(tmp_file, os.path.basename(ligand).replace('.pdb', '-redock.pdbqt')) 
+    top_10_ligands_redock = [os.path.join(tmp_file, os.path.basename(ligand).replace('.pdbqt', '_smina.pdbqt')) 
                              for ligand in top_10_ligands]
     
-    # top_10_ligands_redock[0] = top_10_ligands_redock[0].replace('.pdb', '-redock.pdbqt') # the reference ligand is is pdb format
     ligand_pdb_files = []
-    for ligand_file, ligand_file_redock in zip(top_10_ligands, top_10_ligands_redock):
+    for ligand_file, ligand_file_redock in tqdm.tqdm(zip(top_10_ligands, top_10_ligands_redock)):
         
         if not os.path.isfile(ligand_file_redock):
             
             print(f"Re-docking {os.path.basename(ligand_file)} to {os.path.basename(ligand_file_redock)}")
-            run_docking(args.protein_file, ligand_file, args.pocket_file, center_x, center_y, center_z, size_x, size_y, size_z, remove_tmp_files=False)
+            docking_with_smina(args.protein_file, ligand_file, (center_x, center_y, center_z))
+            # run_docking(args.protein_file, ligand_file, args.pocket_file, center_x, center_y, center_z, size_x, size_y, size_z, remove_tmp_files=False)
         
         output_file = os.path.join(os.path.dirname(ligand_file_redock), os.path.basename(ligand_file_redock).replace('.pdbqt', '.pdb'))
         ligand_pdb_files.append(output_file)
-        convert_pdbqt_to_pdb(ligand_file_redock, output_file)
+        command = f'obabel -ipdbqt {ligand_file_redock} -opdb -O {output_file} -h'
+        subprocess.run(command, shell=True, capture_output=True, text=True)
+        # convert_pdbqt_to_pdb(ligand_file_redock, output_file)
     
-    for ligand_file in top_10_ligands:
-        ligand2center.move2center(args.pocket_file, ligand_file, ligand_file)
+    # for ligand_file in top_10_ligands:
+    #     ligand2center.move2center(args.pocket_file, ligand_file, ligand_file)
 
     script_file = create_pymol_script(args.protein_file, top_10_ligands, ligand_pdb_files, args.pocket_file, args.ligand_ref_file, args.output_image_base)
     
