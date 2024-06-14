@@ -132,7 +132,7 @@ def prepare_ligand(ligand_file, out_file=None, verbose=0):
 
 
 
-def prepare_ligand_batch(ligand_folder, out_folder=None, verbose=0):
+def prepare_pdb_ligand_batch(ligand_folder, out_folder=None, verbose=0):
     if out_folder is None:
         out_folder = ligand_folder + '_pdbqt'
         if not osp.exists(out_folder):
@@ -487,7 +487,7 @@ def main():
     pdbqt_folder = ligand_folder + '_pdbqt'
     if not os.path.isdir(pdbqt_folder):
         os.makedirs(pdbqt_folder, exist_ok=True)
-        prepare_ligand_batch(ligand_folder, pdbqt_folder)
+        prepare_pdb_ligand_batch(ligand_folder, pdbqt_folder)
     
     prepare_target(protein_file)
     protein_file = protein_file + 'qt'
@@ -547,11 +547,11 @@ def main():
     # top_10_ligands= [os.path.join(args.ligand_folder, "701_pred_5_GLP1_6xox_lily_pocket.pdb.mol")]
     # copy the reference ligand to the ligand directory if it does not exist
     
-    # homemade_folder = os.path.join(os.path.join(receptor_folder, 'homemade'))
-    # homemade_files = os.listdir(homemade_folder)
+    homemade_folder = os.path.join(os.path.join(receptor_folder, 'homemade'))
+    homemade_files = os.listdir(homemade_folder)
     
-    # prepare_ligand_batch(homemade_folder, args.ligand_folder)
-    # top_10_ligands += [os.path.join(args.ligand_folder, v+'qt') for v in homemade_files]
+    prepare_pdb_ligand_batch(homemade_folder, args.ligand_folder)
+    top_10_ligands += [os.path.join(args.ligand_folder, v+'qt') for v in homemade_files if v.endswith('.pdb')]
 
     # show redocking poses
     
@@ -568,7 +568,7 @@ def main():
         
         if not os.path.isfile(ligand_file_redock):
             
-            print(f"Re-docking {os.path.basename(ligand_file)} to {os.path.basename(ligand_file_redock)}")
+            print(f"\nRe-docking {os.path.basename(ligand_file)} to {os.path.basename(ligand_file_redock)}")
             docking_with_smina(args.protein_file, ligand_file, (center_x, center_y, center_z))
             # run_docking(args.protein_file, ligand_file, args.pocket_file, center_x, center_y, center_z, size_x, size_y, size_z, remove_tmp_files=False)
         

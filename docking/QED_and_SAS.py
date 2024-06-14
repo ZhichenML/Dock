@@ -117,7 +117,7 @@ def main(args):
     property_dicts = []
     for index, row in docking_results_df.iterrows():
         
-        ligand_file = row['Ligand File']
+        ligand_file = row['Ligand File'].replace('.pdbqt', '.pdb')
         docking_score = row['Minimized Affinity']  # Assuming the column name for docking score is 'Minimized Affinity'
         ligand_file_path = os.path.join(args.ligand_folder, ligand_file)
         property_dict = calculate_mol_property(ligand_file_path)
@@ -137,14 +137,97 @@ def main(args):
 
     print(f"Properties saved to: {args.output_file}")
 
+import os
+import pandas as pd
+from rdkit import Chem
+from rdkit.Chem import Draw
+# import matplotlib.pyplot as plt
+
+def smiles_to_image(smiles, img_path):
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is not None:
+        img = Draw.MolToImage(mol, size=(200, 200))
+        plt.imshow(img)
+        plt.axis('off')
+        plt.savefig(img_path, bbox_inches='tight', pad_inches=0)
+        plt.close()
+        return img_path
+    else:
+        return None
+
+def add_ligand_smiles_batch(fpath='/public/home/gongzhichen/code/Lingo3DMol/data/output/Generated_Ligands/GLP1_6xox_lily_pocket.pdb'):
+    new_fpath = '/public/home/gongzhichen/code/Lingo3DMol/data/output/Generated_Ligands/GLP1_6xox_lily_pocket.pdb.revise'
+    result_path = os.path.join(new_fpath, 'ligand_properties.csv')
+    ligand_file_result = pd.read_csv(result_path)
+    ligand_files = ligand_file_result['Ligand File']
+    
+    smile_list = []
+    img_list = []
+    
+    for ligand_file in ligand_files:
+        if ligand_file.endswith('.mol'):
+            with open(os.path.join(fpath, ligand_file), 'r') as f:
+                smile = f.readlines()[0].strip()
+                smile_list.append(smile)
+                # img_filename = f"{ligand_file}.png"
+                # img_path = os.path.join(fpath, img_filename)
+                # img_path = smiles_to_image(smile, img_path)
+                # img_list.append(img_path)
+        else:
+            smile_list.append(None)
+    
+    df = pd.DataFrame({'Ligand File': ligand_files, 'SMILES': smile_list})
+    new_df = pd.merge(ligand_file_result, df, on='Ligand File')
+    new_df.to_csv(os.path.join(new_fpath, 'ligand_smiles.csv'), index=False)
+
+# import pandas as pd 
+# import xlsxwriter
+# import openpyxl
+ 
+# from rdkit import Chem
+# from rdkit.Chem import Draw
+# from rdkit.Chem.Draw.MolDrawing import MolDrawing,DrawingOptions
+ 
+ 
+# # 读入要处理的数据
+# df = pd.read_excel('dataset.xlsx', engine='openpyxl',header=None)
+ 
+# # 根据smiles编码生成图片，生成的图片挡在generation文件夹中
+# def generation_images(data):
+#     draw = data.smiles.tolist()
+#     for i in draw:
+#         mol = Chem.MolFromSmiles(i)
+#         Draw.MolToFile(mol,f'./generation/img{i}.png',size=(150,100))
+ 
+# # 创建excel表格，将生成的图片读入
+# def load_images(data):
+#     workbook = xlsxwriter.Workbook('dataset_with_iamges.xlsx')
+#     worksheet = workbook.add_worksheet()
+#     for i,j in enumerate(data.smiles.tolist()):
+#         worksheet.write(f'A{i+1}', f'{j}')
+#         worksheet.insert_image(f'B{i+1}', f'./generation/img{j}.png')
+#     workbook.close()
+ 
+# generation_images(df)
+# load_images(df)
+# # Example usage:
+# # add_ligand_smiles_batch('/public/home/gongzhichen/code/Lingo3DMol/data/output/Generated_Ligands/GLP1_6xox_lily_pocket.pdb')
+
+
+
+    
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Calculate molecular properties for ligands listed in docking results CSV.")
-    parser.add_argument('--docking_results_file', default='/public/home/gongzhichen/code/Lingo3DMol/datasets/Generated_Ligands/GLP1_6xox_lily_pocket.pdb/docking_results.csv', help='Path to the docking results CSV file')
-    parser.add_argument('--ligand_folder', default='/public/home/gongzhichen/code/Lingo3DMol/datasets/Generated_Ligands/GLP1_6xox_lily_pocket.pdb', help='Path to the folder containing ligand files')
-    parser.add_argument('--output_file', default='/public/home/gongzhichen/code/Lingo3DMol/datasets/Generated_Ligands/GLP1_6xox_lily_pocket.pdb//ligand_properties.csv', help='Path to save the ligand properties CSV file')
+    parser.add_argument('--docking_results_file', default='/public/home/gongzhichen/code/Lingo3DMol/data/input/receptors/GLP1_6xox_lily/docking_results.csv', help='Path to the docking results CSV file')
+    parser.add_argument('--ligand_folder', default='/public/home/gongzhichen/code/Lingo3DMol/data/output/Generated_Ligands/GLP1_6xox_lily_pocket.pdb_mol2pdb', help='Path to the folder containing ligand files')
+    parser.add_argument('--output_file', default='/public/home/gongzhichen/code/Lingo3DMol/data/input/receptors/GLP1_6xox_lily/ligand_properties.csv', help='Path to save the ligand properties CSV file')
     args = parser.parse_args()
 
     main(args)
+
+    # add_ligand_smiles_batch()
 
 
     
