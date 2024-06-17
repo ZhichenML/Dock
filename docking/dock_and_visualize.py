@@ -11,6 +11,7 @@ import rdkit
 from rdkit.Chem import rdMolTransforms
 import os.path as osp
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
+
 smina_bin = '/public/home/gongzhichen/code/Lingo3DMol/docking/smina.static'
 
 import ligand2center
@@ -548,6 +549,16 @@ def main():
     # copy the reference ligand to the ligand directory if it does not exist
     
     homemade_folder = os.path.join(os.path.join(receptor_folder, 'homemade'))
+
+    # if you want to test new smiles 
+    new_smiles = ['FC(C(C=N1)=C2N1C)=C(C=C2)N(C=CN3C4=C([C@H](C)N5C(C6=NC(C=C7[C@@H]8CC(C)(C)OCC8)=C(C=N7)N6C9(CC9)C(NO%10)=NC%10=O)=O)C(CC5)=NN4C(C=C%11)=CC(C%12CC%12)=C%11F)C3=O',
+                    'FC(C(C=N1)=C2N1C)=C(C=C2)N(C=CN3C4=C([C@H](C)N5C(C6=NC(C=C7[C@H]8CC(C)(C)OCC8)=C(C=N7)N6C9(CC9)C(NO%10)=NC%10=O)=O)C(CC5)=NN4C(C=C%11)=CC(C%12CC%12)=C%11F)C3=O',
+                    'FC(C(C=N1)=C2N1C)=C(C=C2)N(C=CN3C4=C([C@H](C)N5C(C6=NC(N=C7[C@@H]8CC(C)(C)OCC8)=C(C=C7)N6C9(CC9)C(NO%10)=NC%10=O)=O)C(CC5)=NN4C(C=C%11)=CC(C%12CC%12)=C%11F)C3=O',
+                    'FC(C(C=N1)=C2N1C)=C(C=C2)N(C=CN3C4=C([C@H](C)N5C(C6=NC(N=C7[C@H]8CC(C)(C)OCC8)=C(C=C7)N6C9(CC9)C(NO%10)=NC%10=O)=O)C(CC5)=NN4C(C=C%11)=CC(C%12CC%12)=C%11F)C3=O']
+    pdb_filename = [os.path.join(homemade_folder, f'test_smiles_{ind}.pdb') for ind in range(len(new_smiles)) ]
+    for ind, v in enumerate(new_smiles):
+        smiles_to_3d_pdb(v, pdb_filename[ind])
+
     homemade_files = os.listdir(homemade_folder)
     
     prepare_pdb_ligand_batch(homemade_folder, args.ligand_folder)
