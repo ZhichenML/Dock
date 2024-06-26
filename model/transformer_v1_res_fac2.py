@@ -122,7 +122,7 @@ class TransformerModel(nn.Module):
                 smi_map_n2=None,isTrain=True, contact_idx=None, sample_num=1, max_sample_step=100, 
                 isMultiSample=False,USE_THRESHOLD=False,isGuideSample=False,guidepath=None,
                 start_this_step=0,OnceMolGen=False,frag_len=0,tempture=1.0):
-
+        
         coords_emb       = self.coords_emb(coords)#这里编码对应的都是蛋白的原子参数饿位置参数，因此对应的都是encoder部分
 
         coords_embedding = torch.reshape(coords_emb, (coords_emb.shape[0], coords_emb.shape[1], -1))#每个方向的坐标编码到128长度，三个方向合成一排就是128*3长度
@@ -404,12 +404,12 @@ class TransformerModel(nn.Module):
                                                     y_prod_=y_p[:, i - 1],
                                                     z_prod_=z_p[:, i - 1], seq_idx=i)
                 elif isGuideSample and i<start_this_step: # 如果有指导坐标则进行赋值
-                    print(i,'coords go gudie')
+                    print(i,'-th coords go gudie')
                     coords_pred = torch.from_numpy(guidepath[1][:,i]).long().cuda()
                 
                 # print('cor time is ',time.time()-cor_start)
                 gt_coords[:, i] = coords_pred
-                print(coords_pred[0])
+                # print(coords_pred[0])
                 gt_coords = gt_coords.long()
 
                 new_fea0_ = self.gt_fea1(captions)

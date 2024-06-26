@@ -1077,7 +1077,7 @@ class TransformerModel(nn.Module):
         :param max_sample_step:
         :return:
         '''
-
+        
 
         coords_emb       = self.coords_emb(coords)
 
