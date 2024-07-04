@@ -12,12 +12,13 @@ import torch
 import torch.nn.functional as F
 import copy
 import numpy as np
+
 from copy import deepcopy
 from model.Module import MLP,MultiHeadedAttention,MultiHeadedAttention_att,MultiHeadedAttentionBias\
     ,PositionwiseFeedForward,PositionalEncoding,EncoderLayer,Encoder,DecoderLayerBias,DecoderBias,edge_vector,cdist
 from concurrent.futures import ThreadPoolExecutor,wait,ALL_COMPLETED
 from multiprocessing import Pool
-from model.transformer_v1_res_mp1 import subsequent_mask,topkp_random,find_root_smi_cur,segment_coords,next_coords
+from model.transformer_v1_res_mp1 import subsequent_mask, topkp_random, find_root_smi_cur, segment_coords, next_coords
 
     
 class TransformerModel(nn.Module):
@@ -175,14 +176,14 @@ class TransformerModel(nn.Module):
         src_mask1 = src_mask.repeat(1, src_mask.size(-1), 1)#这样就相当于把所有的为0的行全部mask掉了，也就相当于前面的行都是1，后面的行都是0的一个500*500的mask矩阵
         #final torch.Size([1, 500, 500])
         memory    = self.encoder(final_fea, src_mask1)
-        isTrain   = True
-        import pdb; pdb.set_trace()
+        isTrain   = False
+
         if isTrain:
             #topo: non bias att
             
             debug = True
             if debug == True:
-                import numpy as np
+                
                 tmp = np.load('examples.npz', allow_pickle=True)    
                 captions = torch.tensor(tmp['captions'][0], dtype=torch.int64).to('cuda'); captions = captions.unsqueeze(0)
                 gt_coords = torch.tensor(tmp['gt_coords'][0], dtype=torch.int64).to('cuda'); gt_coords = gt_coords.unsqueeze(0)
@@ -368,7 +369,7 @@ class TransformerModel(nn.Module):
                         edge_fea_topo = torch.cat([edge_vec_topo, dist_sca_topo], dim=-1)
 
                         edge_fea_bias_topo = self.linears_edge1_topo(self.linears_edge_topo(edge_fea_topo)).permute(0, 3, 1, 2)
-                        import pdb; pdb.set_trace()
+                        # import pdb; pdb.set_trace()
                         res, _ = self.decoder(tgt_fea, memory, src_mask2, tgt_mask, edge_fea_bias_topo)
 
                         proj_ = self.proj(res[:,i-1])#res是中间decoder层的输出，而proj应该是从decoder层到后面tocken预测层中间的线性层。用它来预测下一个tocken是什么
@@ -533,16 +534,16 @@ class TransformerModel(nn.Module):
                     # print(coords_pred[0])
                     gt_coords = gt_coords.long()
 
-                    new_fea0_ = self.gt_fea1(captions)
+                    # type_fea = self.gt_fea1(captions)
 
-                    # gt_coords_emb0 = self.coords_emb_gt(gt_coords)
-                    gt_coords_emb0 = self.coords_emb_gt(gt_coords)
+                    
+                    # lig_coords_emb = self.coords_emb_gt(gt_coords)
+                    # lig_coords_emb = gt_coords_emb0.reshape(lig_coords_emb.shape[0], lig_coords_emb.shape[1], -1)
 
-                    gt_coords_emb = gt_coords_emb0.reshape(gt_coords_emb0.shape[0], gt_coords_emb0.shape[1], -1)
-                    new_fea0 = torch.cat([new_fea0_, gt_coords_emb], dim=-1)
-                    # print("new",new_fea0.shape,new_fea0)
-                    tgt_fea = self.pos_encode(new_fea0)
-                    import pdb; pdb.set_trace()
+                    # lig_emb = torch.cat([type_fea, lig_coords_emb], dim=-1)
+                    
+                    # tgt_fea = self.pos_encode(lig_emb)
+                    
                     if OnceMolGen: # determine the terminal of generation
                         if i>=start_this_step:
                             terminal = torch.where((code==2) | (code==0),0,1)
@@ -553,21 +554,22 @@ class TransformerModel(nn.Module):
                         if i>=start_this_step and i<=start_this_step+frag_len: # 观测盲区，只找2
                             terminal = torch.where((code==2) | (code==0), 0, 1)
                             isTerminal = terminal*isTerminal
-                            valid_index = torch.where(code==2)[0][isValidNum[torch.where(code==2)]==0]
+                            valid_index = torch.where(code==2)[0][isValidNum[torch.where(code==2)]==0] # 找到第一个分割点的index
                             isValidNum[valid_index] = i
                         elif i>start_this_step+frag_len: # 观测区找3
                             terminal = torch.where((code==3) | (code==0),0,1)
                             isTerminal = terminal*isTerminal
-                            valid_index = torch.where(code==3)[0][isValidNum[torch.where(code==3)]==0]
+                            valid_index = torch.where(code==3)[0][isValidNum[torch.where(code==3)]==0] # 找到第一个结束点的index
                             isValidNum[valid_index] = i
 
                     if torch.sum(isTerminal)==0: # all generation is done for [40] samples
-                        import pdb; pdb.set_trace()
-                        np.savez('examples.npz', captions=captions.cpu().numpy(), gt_coords=gt_coords.cpu().numpy(), smi_map=smi_map.cpu().numpy(), smi_map_n1=smi_map_n1.cpu().numpy(), smi_map_n2=smi_map_n2.cpu().numpy())
+                        # import pdb; pdb.set_trace()
+                        # np.savez('examples.npz', captions=captions.cpu().numpy(), gt_coords=gt_coords.cpu().numpy(), smi_map=smi_map.cpu().numpy(), smi_map_n1=smi_map_n1.cpu().numpy(), smi_map_n2=smi_map_n2.cpu().numpy())
                         break
             isValidNum = isValidNum.cpu().numpy().astype(int)
+            
             mask = (np.arange(100)<=isValidNum[:,np.newaxis]).astype(int)
-        return captions, gt_coords, mask, Value_prob
+            return captions, gt_coords, mask, Value_prob
 
     
 if __name__ == '__main__':

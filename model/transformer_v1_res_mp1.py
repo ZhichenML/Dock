@@ -19,7 +19,7 @@ from copy import deepcopy
 
 
 def cube(radius=21):
-    cube_ = np.zeros((radius*2+1,radius*2+1,radius*2+1,3))
+    cube_ = np.zeros((radius*2+1, radius*2+1, radius*2+1, 3))
     for x in range(0, radius*2+1):
         for y in range(0, radius*2+1):
             for z in range(0, radius*2+1):
@@ -31,7 +31,12 @@ def cube(radius=21):
 
 cube_template1 = cube()
 
-def make_cube(center,gt_coords,seg_coords,center_pre,center_pre_pre,dist,theta,degree,x_prod,y_prod,z_prod,isdist,istheta,isdegree,radius=21):
+def make_cube(center, gt_coords, seg_coords, center_pre, center_pre_pre, 
+              dist,theta, degree, 
+              x_prod, y_prod, z_prod, 
+              isdist, istheta, isdegree, 
+              radius=21):
+    
     # 2.1A 范围内的点
     cube_template=cube_template1.cuda(device=center.device)
     new_cubes = cube_template.repeat(len(center),1,1) # batch radius*2+1^3 ,3
@@ -39,7 +44,7 @@ def make_cube(center,gt_coords,seg_coords,center_pre,center_pre_pre,dist,theta,d
     translate = new_cubes+new_center-21
     translate = torch.clamp(translate,min=0.0,max=239.0)
     # get joint prob
-    indices   = torch.unsqueeze(torch.arange(0,len(center)),dim=-1).cuda() # batch 1 1
+    indices   = torch.unsqueeze(torch.arange(0, len(center)), dim=-1).cuda() # batch 1 1
     indices2  = indices.repeat(1,(radius*2+1)*(radius*2+1)*(radius*2+1))  #
     joint_prob_x = x_prod[indices2,translate[:,:,0].long()]
     joint_prob_y = y_prod[indices2,translate[:,:,1].long()]
@@ -54,42 +59,43 @@ def make_cube(center,gt_coords,seg_coords,center_pre,center_pre_pre,dist,theta,d
     mask1A = maskA1*maskA2
     joint_prob = joint_prob.masked_fill(mask1A == 0, -1e9)
     # mask 和 已经生成的点1.5A （14） 范围的点 （O 1.4）
-    dist_pre = torch.cdist(translate,gt_coords.float(),p=2.0)
-    dist_pre1 = torch.where(dist_pre<=14,0.0,1.0)
-    dist_pre2 = torch.sum(dist_pre1,dim=-1)
-    dist_pre_mask = torch.where(dist_pre2==gt_coords.shape[1],1.0,0.0)
+    dist_pre = torch.cdist(translate, gt_coords.float(), p=2.0)
+    dist_pre1 = torch.where(dist_pre<=14, 0.0, 1.0)
+    dist_pre2 = torch.sum(dist_pre1, dim=-1)
+    dist_pre_mask = torch.where(dist_pre2==gt_coords.shape[1], 1.0, 0.0) # legal points
     dist_pre_seg = torch.cdist(translate, seg_coords.float(), p=2.0)
     dist_pre1_seg = torch.where(dist_pre_seg <= 10, 0.0, 1.0)
     dist_pre2_seg = torch.sum(dist_pre1_seg, dim=-1)
     dist_pre_mask_seg = torch.where(dist_pre2_seg == seg_coords.shape[1], 1.0, 0.0)
-    total_mask = mask1A* dist_pre_mask*dist_pre_mask_seg
+    total_mask = mask1A* dist_pre_mask*dist_pre_mask_seg # ? >10, <21 around the center, and, >14 around exist ligand, and,  >10 around seg_coords, what is seg_coords?
     # mask 和已经生成的点
 
     # 取得 符合dist的点
     # if isdist:
+
     t1 = time.time()
-    dist_new =  torch.unsqueeze(dist,dim=-1) # batch 1
+    dist_new =  torch.unsqueeze(dist, dim=-1) # batch 1
     dist_new2 = dist_new.repeat(1,(radius*2+1)*(radius*2+1)*(radius*2+1))
-    dist_new2_mask = torch.where(dist_new2==0,0.0,1.0) #记住等于0 的特殊位置
-    dist_new3 = (dist_new2+9.0)*dist_new2_mask
-    dist_new4 = torch.where((d_c<=dist_new3+1) & (d_c>=dist_new3-1),1.0,0.0) # orig 1 TODO
+    dist_new2_mask = torch.where(dist_new2==0, 0.0, 1.0) #记住等于0 的特殊位置
+    dist_new3 = (dist_new2+9.0) * dist_new2_mask
+    dist_new4 = torch.where((d_c<=dist_new3+1) & (d_c>=dist_new3-1), 1.0, 0.0) # orig 1 TODO
     dist_new4  = dist_new4 * isdist   # 会全部置为 0
     temp_mask = total_mask*dist_new4
-    temp_mask_sig = torch.unsqueeze(torch.where(torch.sum(temp_mask,dim=-1)==0,0.0,1.0),dim=-1)
-    total_mask = (1-temp_mask_sig)*total_mask + temp_mask_sig * temp_mask
+    temp_mask_sig = torch.unsqueeze(torch.where(torch.sum(temp_mask, dim=-1)==0, 0.0, 1.0), dim=-1)
+    total_mask = (1-temp_mask_sig)*total_mask + temp_mask_sig * temp_mask # 有键长信息的点为1，把键长限制加入mask，否则沿用之前的mask
     t2 = time.time()
 
     #获得指定角度的点
-    pre_vec = (center_pre.float() - center.float()) / torch.unsqueeze(torch.linalg.norm((center_pre - center).float(),dim=-1) ,dim=-1)# batch 3
-    pre_vec1 = torch.unsqueeze(pre_vec,dim=1) # batch 1 3
-    pre_vec2 = pre_vec1.repeat(1,(radius*2+1)*(radius*2+1)*(radius*2+1),1) # batch ... 3
+    pre_vec = (center_pre.float() - center.float()) / torch.unsqueeze(torch.linalg.norm((center_pre - center).float(), dim=-1), dim=-1)# batch 3
+    pre_vec1 = torch.unsqueeze(pre_vec, dim=1) # batch 1 3
+    pre_vec2 = pre_vec1.repeat(1, (radius*2+1)*(radius*2+1)*(radius*2+1), 1) # batch ... 3
     cur_vec0 = (translate - new_center)
     cur_vec = cur_vec0/torch.unsqueeze(torch.linalg.norm(cur_vec0,dim=-1),dim=-1) # batch ... 3
     cos_theta = torch.arccos(torch.sum(cur_vec*pre_vec2,dim=-1))
-    theta_cur = cos_theta*180/math.pi        #
-    theta1 = torch.unsqueeze(theta,dim=-1)
+    theta_cur = cos_theta*180/math.pi        # get theta with math
+    theta1 = torch.unsqueeze(theta, dim=-1)
     theta2 = theta1.repeat(1,(radius*2+1)*(radius*2+1)*(radius*2+1))
-    theta_mask = torch.where((theta_cur<=(theta2+2.0)) & (theta_cur>=(theta2-2.0)),1.0,0.0)  # ToDo pre 2
+    theta_mask = torch.where((theta_cur<=(theta2+2.0)) & (theta_cur>=(theta2-2.0)), 1.0, 0.0)  # ToDo pre 2
     theta_mask = theta_mask * istheta  # 会全部置为 0
     temp_mask =  total_mask * theta_mask
     temp_mask_sig = torch.unsqueeze(torch.where(torch.sum(temp_mask, dim=-1) == 0, 0.0, 1.0),dim=-1)
@@ -130,19 +136,20 @@ def make_cube(center,gt_coords,seg_coords,center_pre,center_pre_pre,dist,theta,d
     total_mask1 = mask1A * dist_pre_mask
     temp_mask_sig = torch.unsqueeze(torch.where(torch.sum(total_mask, dim=-1) == 0, 0.0, 1.0),dim=-1)
     total_mask == (1-temp_mask_sig)*total_mask1 + temp_mask_sig * total_mask
+    # do in the range of local search space
     new_joint_prob = joint_prob.masked_fill(total_mask == 0, -1e9)
     new_joint_prob2 = torch.softmax(new_joint_prob,dim=-1)
-    ind = torch.where(new_joint_prob2==-1e9,0.0,1.0)
+    ind = torch.where(new_joint_prob2==-1e9, 0.0, 1.0)
     # print(torch.sum(ind))
-    idx = torch.max(new_joint_prob2,dim=-1)[1]
-    indices_batch = torch.arange(0,len(center)).cuda().long()
-    pred_coords = translate[indices_batch,idx]
+    idx = torch.max(new_joint_prob2, dim=-1)[1]
+    indices_batch = torch.arange(0, len(center)).cuda().long()
+    pred_coords = translate[indices_batch, idx]
 
     return pred_coords
 
 
 
-def make_cube_first(center,x_prod,y_prod,z_prod,radius=35):
+def make_cube_first(center, x_prod, y_prod, z_prod, radius=35):
 
     # 2.1A 范围内的点
     # if radius<=35:
@@ -152,17 +159,17 @@ def make_cube_first(center,x_prod,y_prod,z_prod,radius=35):
     lower =20
     cube_template2 = cube(radius)
 
-    cube_template=cube_template2.cuda(device=center.device)
-    new_cubes = cube_template.repeat(len(center),1,1) # batch radius*2+1^3 ,3
+    cube_template = cube_template2.cuda(device=center.device)
+    new_cubes = cube_template.repeat(len(center), 1, 1) # batch radius*2+1^3 ,3
     new_center = torch.unsqueeze(center,dim=1) # batch 1 3
-    translate = new_cubes+new_center-radius
+    translate = new_cubes + new_center - radius
     translate = torch.clamp(translate,min=0.0,max=239.0)
     # get joint prob
-    indices   = torch.unsqueeze(torch.arange(0,len(center)),dim=-1).cuda() # batch 1 1
+    indices   = torch.unsqueeze(torch.arange(0, len(center)), dim=-1).cuda() # batch 1 1
     indices2  = indices.repeat(1,(radius*2+1)*(radius*2+1)*(radius*2+1))  #
-    joint_prob_x = x_prod[indices2,translate[:,:,0].long()]
-    joint_prob_y = y_prod[indices2,translate[:,:,1].long()]
-    joint_prob_z = z_prod[indices2,translate[:,:,2].long()]
+    joint_prob_x = x_prod[indices2, translate[:,:,0].long()]
+    joint_prob_y = y_prod[indices2, translate[:,:,1].long()]
+    joint_prob_z = z_prod[indices2, translate[:,:,2].long()]
     joint_prob = joint_prob_x*joint_prob_y*joint_prob_z
     # dist_to center
     d1  = translate - new_center
@@ -624,7 +631,7 @@ def find_in_other_frag(sample,j,star_single):
 
 
 
-def find_root_smi_cur(batch_codes,idx,star):
+def find_root_smi_cur(batch_codes, idx, star):
     ele_token = [i for i in range(4,56)]
     sep = [3]
     bracket_pre = [70]
@@ -653,7 +660,7 @@ def find_root_smi_cur(batch_codes,idx,star):
 
             while j>=0:
                 if sample[j] in  sep:
-                    temp,idx_star = find_in_other_frag(sample,j,star[i]) # 第i 条 star 记录
+                    temp, idx_star = find_in_other_frag(sample, j, star[i]) # 第i 条 star 记录
                     # print(temp)
                     res[i] = deepcopy(temp)
                     if sample[idx] in ele_token:
@@ -695,7 +702,7 @@ def find_root_smi_cur(batch_codes,idx,star):
                 j = j-1
     # print(idx,batch_codes,res,star,is_ele)
 
-    return res,star,is_ele.long()
+    return res, star, is_ele.long()
 
 
 
@@ -765,41 +772,44 @@ class MLP(torch.nn.Module):
         return self.seq(layers_input)
 
 
-def next_coords(captions,is_ele,center_,pre_idx,gt_coords_,seg_coords,center_pre_,center_pre_pre_,dist_,theta_,degree_,x_prod_,y_prod_,z_prod_,seq_idx,radius=35):
+def next_coords(captions, is_ele, center_, pre_idx, gt_coords_, seg_coords, center_pre_, center_pre_pre_, 
+                dist_, theta_, degree_, 
+                x_prod_, y_prod_, z_prod_, seq_idx, radius=35):
     t1 = time.time()
+    
     gt_coords_post = copy.deepcopy(gt_coords_)
 
-
+    # pre_idx 设为0
     gt_coords_post[torch.arange(len(gt_coords_post)).long().cuda(), pre_idx.long()] = gt_coords_post[torch.arange(len(gt_coords_post)).long().cuda(), pre_idx.long()] * 0
     seg_coords[torch.arange(len(seg_coords)).long().cuda(), pre_idx.long()] = seg_coords[torch.arange(len(seg_coords)).long().cuda(), pre_idx.long()] * 0
-
-    dist_mask = torch.where(torch.sum(center_,dim=-1)==0,0.0,1.0)
-    theta_mask = torch.where(torch.sum(center_pre_,dim=-1)==0,0.0,1.0)
+    # set mask
+    dist_mask = torch.where(torch.sum(center_, dim=-1)==0, 0.0, 1.0)
+    theta_mask = torch.where(torch.sum(center_pre_,dim=-1)==0, 0.0, 1.0)
     theta_mask = theta_mask*dist_mask
     degree_mask = torch.where(torch.sum(center_pre_pre_,dim=-1)==0,0.0,1.0)
     degree_mask = degree_mask*theta_mask
 
-    dist_mask = torch.unsqueeze(dist_mask,dim=-1)
-    theta_mask = torch.unsqueeze(theta_mask,dim=-1)
-    degree_mask = torch.unsqueeze(degree_mask,dim=-1)
+    dist_mask = torch.unsqueeze(dist_mask, dim=-1)
+    theta_mask = torch.unsqueeze(theta_mask, dim=-1)
+    degree_mask = torch.unsqueeze(degree_mask, dim=-1)
 
-    x_ = x_prod_.max(dim=-1)[1]
+    x_ind = x_prod_.max(dim=-1)[1]
 
-    y_ = y_prod_.max(dim=-1)[1]
-    #
-    z_ = z_prod_.max(dim=-1)[1]
-    #
-    max_coords = torch.stack([x_,y_,z_],dim=-1)
+    y_ind = y_prod_.max(dim=-1)[1]
+    
+    z_ind = z_prod_.max(dim=-1)[1]
+    
+    max_coords = torch.stack([x_ind, y_ind, z_ind],dim=-1)
 
     if seq_idx>1:
-        pred_coords_rule = make_cube(center_, gt_coords_post,seg_coords ,center_pre_, center_pre_pre_,dist_,theta_, degree_,x_prod_, y_prod_, z_prod_, isdist=dist_mask,istheta=theta_mask,isdegree=degree_mask)
+        pred_coords_rule = make_cube(center_, gt_coords_post, seg_coords, center_pre_, center_pre_pre_, dist_, theta_, degree_, x_prod_, y_prod_, z_prod_, isdist=dist_mask, istheta=theta_mask, isdegree=degree_mask)
         pred_coords_total = (1 - dist_mask) * max_coords + dist_mask * pred_coords_rule
 
     else:
-        pred_coords_rule = make_cube_first(center_,x_prod_, y_prod_, z_prod_,radius=radius)
+        pred_coords_rule = make_cube_first(center_, x_prod_, y_prod_, z_prod_, radius=radius)
         pred_coords_total = pred_coords_rule
 
-    is_ele1 = torch.unsqueeze(is_ele,dim=1)
+    is_ele1 = torch.unsqueeze(is_ele, dim=1)
     pred_coords_total1 = pred_coords_total*is_ele1 + center_*(1-is_ele1)
 
     return pred_coords_total1
@@ -873,7 +883,7 @@ class edge_vector(nn.Module):
 
 
 
-def segment_coords(gt_coords,last_sep,ele_mask):
+def segment_coords(gt_coords, last_sep, ele_mask):
     mask = torch.zeros_like(gt_coords).cuda()
     rmask = torch.ones_like(gt_coords).cuda()
     for i in range(len(last_sep)):
@@ -882,7 +892,7 @@ def segment_coords(gt_coords,last_sep,ele_mask):
 
     pre = mask*gt_coords*ele_mask.unsqueeze(-1)
     seg = rmask*gt_coords*ele_mask.unsqueeze(-1)
-    return pre,seg
+    return pre, seg
 
 def segment_mask(gt_coords,last_sep,ele_mask,coords,thred=1.5):
     mask = torch.zeros_like(gt_coords).cuda()

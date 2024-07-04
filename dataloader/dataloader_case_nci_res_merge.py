@@ -19,6 +19,7 @@ vocab = {'C': 1, 'N': 2, 'O': 3, 'S': 4, 'F': 5, 'Cl': 6, 'Br': 7, 'acc': 8, 'do
 
 class mydataset(data.Dataset):
     def __init__(self,fl_name):
+        
         self.fnames = []
         self.ncis   = []
         self.lgds   = []
@@ -46,8 +47,8 @@ class mydataset(data.Dataset):
             lgd_coords = None
             if os.path.isfile(lgdPath):
                 lgd_coords = self.load_lgd_coords(lgdPath)
-
-            type, residue, mask, new_coords,center, contact, contact_scaffold = self.pocketCode.pocketCodeNCI(pdbPath, center=None, pocket_contact=pkt_nci_coords, lig_pos=lgd_coords)
+            
+            type, residue, mask, new_coords, center, contact, contact_scaffold = self.pocketCode.pocketCodeNCI(pdbPath, center=None, pocket_contact=pkt_nci_coords, lig_pos=lgd_coords)
             if np.sum(contact) > 0:
                 contact = torch.FloatTensor(contact)
             else:

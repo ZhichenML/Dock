@@ -26,12 +26,16 @@ from rdkit import RDLogger
 import time
 from model.transformer_v1_res_mp1 import topkp_random
 import argparse
+from inference.cube_collision_check import CollisionCheck
 
 RDLogger.DisableLog('rdApp.*')
 os.environ["CUDA_DEVICE_ORDER"] =    "PCI_BUS_ID"
 warnings.filterwarnings('ignore')
 torch.backends.cudnn.enabled= True
 all_good_nums = 0
+
+import pandas as pd
+smiles2fsmiles_pd = {'smiles':[], 'fsmiles':[]}
 
 def bonusVSpenalty2(coc,pattern,semi_product):
     atom_pos = coc.get_atom_xyz(semi_product)
@@ -86,19 +90,21 @@ def changepos2(mol,center):
         conf.SetAtomPosition(i, p)
     return mol
 
-def go_factory(factory_args,gudiecap,gudiepos,args):
+def go_factory(factory_args, gudiecap, gudiepos, args):
     coords,residue,mask,atom_type,center,caption,contact_idx,contact_prob1,pattern,_ = factory_args
-    sample_num = args.gen_frag_set
-    recon, pred_pos,cap_mask, Value_prob = caption(coords=coords, type=atom_type,
+    sample_num = args.generation_batch
+    
+    recon, pred_pos, cap_mask, Value_prob = caption(coords=coords, type=atom_type,
                     residue=residue, src_mask=mask,
                     critical_anchor=contact_prob1,
                     contact_idx=contact_idx,
                     sample_num=sample_num, isTrain=args.isTrain, 
                     isMultiSample=args.isMultiSample,
                     USE_THRESHOLD=args.USE_THRESHOLD,
-                    isGuideSample=args.isGuideSample,guidepath=[np.tile(gudiecap,(args.gen_frag_set,1)),np.tile(gudiepos,(args.gen_frag_set,1,1))],
+                    isGuideSample=args.isGuideSample,guidepath=[np.tile(gudiecap,(args.generation_batch,1)),np.tile(gudiepos,(args.generation_batch,1,1))],
                     start_this_step=(gudiecap>0).sum(),
                     OnceMolGen=args.OnceMolGen,frag_len=args.frag_len_add,tempture=args.tempture)
+    import pdb; pdb.set_trace()
     captions = recon
     captions = captions.cpu().data.numpy()
     pred_pos = pred_pos.cpu().data.numpy()
@@ -107,20 +113,21 @@ def go_factory(factory_args,gudiecap,gudiepos,args):
     captions = captions*cap_mask
     pred_pos = pred_pos*cap_mask[:,:,np.newaxis]
     Value_prob = Value_prob*cap_mask
-    return captions,pred_pos,center,Value_prob
+    return captions, pred_pos, center, Value_prob
 
-def get_partial_to_warehouse(frag_level,factory_args,partial_product,args):
+def get_partial_to_warehouse(frag_level, factory_args, partial_product, args):
+    import pdb; pdb.set_trace() # factory_args = [coords, residue, mask, atom_type, center, caption, contact_idx, contact_prob1, collision, contact_scaffold_prob1]
     coc = factory_args[8]
     pattern = coc.maskcoc
     fragUtil = FragmolUtil()
-    all_captions = np.empty((0,100))
-    all_pos = np.empty((0,100,3))
-    all_center = np.empty((0,3))
+    all_captions = np.empty((0, 100))
+    all_pos = np.empty((0, 100, 3))
+    all_center = np.empty((0, 3))
     value_scores=[]
     anchor_scores_list=[]
     prod_time = 0
     uni_smi = set()
-    one_line_product = []
+    one_line_product = [] # set guide 
     for frag in partial_product[0]:
         one_line_product.extend(frag)
     gudiecap = np.zeros((1,100))
@@ -136,8 +143,8 @@ def get_partial_to_warehouse(frag_level,factory_args,partial_product,args):
     anchors = factory_args[0][factory_args[-1]==1]
 
     while all_captions.shape[0]<100 and prod_time<factory_time:
-        print('level',frag_level,'prod time',prod_time,'frag num',all_captions.shape[0])
-        captions,pred_pos,center,Value_prob = go_factory(factory_args,gudiecap,gudiepos,args)
+        print('level', frag_level, 'prod time', prod_time, 'frag num', all_captions.shape[0])
+        captions, pred_pos, center, Value_prob = go_factory(factory_args, gudiecap, gudiepos, args)
         
         smiles, ss, moleculars = fragUtil.decode3d(captions, pred_pos)
         valid_index = []
@@ -172,8 +179,8 @@ def get_partial_to_warehouse(frag_level,factory_args,partial_product,args):
     all_captions = all_captions[all_pos_indices]
     all_pos = all_pos[all_pos_indices]
 
-    all_captions = all_captions[:args.gen_frag_set//5]
-    all_pos = all_pos[:args.gen_frag_set//5]
+    all_captions = all_captions[:args.generation_batch//5]
+    all_pos = all_pos[:args.generation_batch//5]
 
     frag_new_cap = []
     frag_new_pos = []
@@ -200,9 +207,10 @@ def get_partial_to_warehouse(frag_level,factory_args,partial_product,args):
                 continue
         frag_new_cap.append(cap[o_index+1:index+1])
         frag_new_pos.append(pos[o_index+1:index+1,:])
-    return frag_new_cap,frag_new_pos
+    return frag_new_cap, frag_new_pos
 
 def write_product(partial_product):
+    import pdb; pdb.set_trace()
     one_line_product = []
     for frag in partial_product[0]:
         one_line_product.extend(frag)
@@ -217,14 +225,20 @@ def write_product(partial_product):
 
     fragUtil = FragmolUtil()
     smiles, ss, moleculars = fragUtil.decode3d(gudiecap, gudiepos)
-    return smiles, ss, moleculars,gudiecap
+    return smiles, ss, moleculars, gudiecap
 
-def molecular_workflow(frag_level,warehouse,partial_product,fnames,factory_args,savedir,args):
+def molecular_workflow(frag_level, warehouse, partial_product, fnames, factory_args, savedir, args):
+    import pdb; pdb.set_trace()
     print('now level is', frag_level)
     global all_good_nums
     if len(partial_product[0]) and ((2 in partial_product[0][-1])):
+        
         saveroot = savedir
+        
         smiles, ss, moleculars,gudiecap =  write_product(partial_product)
+        smiles2fsmiles_pd['smiles'].append(smiles)
+        smiles2fsmiles_pd['fsmiles'].append(''.join(ss[0]))
+        
         center = factory_args[4][0]
         name = fnames[0].strip().split('/')[-1].split('_post_final')[0]
         mol = changepos(moleculars[0],
@@ -235,7 +249,7 @@ def molecular_workflow(frag_level,warehouse,partial_product,fnames,factory_args,
         return 
     else:
         if frag_level+1>len(warehouse[0]):
-            captions,pred_pos = get_partial_to_warehouse(frag_level,factory_args,partial_product,args)
+            captions,pred_pos = get_partial_to_warehouse(frag_level, factory_args, partial_product, args)
             if len(captions)==0:
                 return
             warehouse[0].append(captions)
@@ -252,23 +266,22 @@ def molecular_workflow(frag_level,warehouse,partial_product,fnames,factory_args,
         warehouse[0].pop(-1)
         warehouse[1].pop(-1)
 
-def validation(caption_contact,caption,testloader, testset, savedir, args):
+def validation(caption_contact, caption, testloader, testset, savedir, args):
+    
     caption.eval()
     fnames = testset.fnames
-    sample_num = args.gen_frag_set
+    sample_num = args.generation_batch
     resolution = 0.1
     length = int(24 / resolution)
     caption.eval()
     warehouse = [[],[]]
     start_time = time.time()
     for i, (coords, residue, type, mask, center, index, contact_prob, contact_scaffold_prob) in enumerate(testloader):
-            from inference.cube_collision_check import CollisionCheck
-            coc = CollisionCheck(args.pocket_path_for_coc,args.coc_dis,center=center)
+            collision = CollisionCheck(args.pocket_path_for_coc, args.coc_dis, center=center)
             break
     global all_good_nums
     while True:
-        for i, (coords, residue, atom_type, mask, center, 
-            index, contact_prob, contact_scaffold_prob) in enumerate(testloader):
+        for i, (coords, residue, atom_type, mask, center, index, contact_prob, contact_scaffold_prob) in enumerate(testloader):
             with torch.no_grad():
                 coords = coords.cuda()
                 residue = residue.cuda()
@@ -280,14 +293,11 @@ def validation(caption_contact,caption,testloader, testset, savedir, args):
                 if contact_prob.shape[-1]==0 or contact_scaffold_prob.shape[-1]==0:
                     model_contact_prob, model_contact_scaffold_prob = caption_contact(coords=coords,
                                     residue=residue, atom_type=atom_type, src_mask=mask, isTrain=args.isTrain)
-                if contact_prob.shape[-1]==0:
-                    contact_prob = model_contact_prob
-                else:
-                    contact_prob = contact_prob.cuda()
-                if contact_scaffold_prob.shape[-1]==0:
-                    contact_scaffold_prob = model_contact_scaffold_prob
-                else:
-                    contact_scaffold_prob = contact_scaffold_prob.cuda()
+                
+                contact_prob = model_contact_prob if contact_prob.shape[-1]==0 else contact_prob.cuda()
+                
+                contact_scaffold_prob = model_contact_scaffold_prob if contact_scaffold_prob.shape[-1]==0 else contact_scaffold_prob.cuda()
+                
                     
                 contact_prob0 = torch.where(contact_prob > args.nci_thrs, 2, 0)
                 contact_scaffold_prob1 = torch.where(contact_scaffold_prob > 0.9, 1, 0)
@@ -299,10 +309,13 @@ def validation(caption_contact,caption,testloader, testset, savedir, args):
                 src_mask_repeat = mask.squeeze(1).repeat(sample_num,1)
                 contact_prob    = contact_prob.masked_fill(src_mask_repeat == 0, 0)
                 contact_prob    = contact_prob.masked_fill(residue_mask == 0, 0)
+
                 contact_prob    = torch.softmax(contact_prob*5, dim=-1)
                 contact_idx     = topkp_random(contact_prob, top_k=args.topk, top_p=0.9, thred=0.0)
-                factory_args = [coords,residue,mask,atom_type,center,caption,contact_idx,contact_prob1,coc,contact_scaffold_prob1]
-                molecular_workflow(0,warehouse,[[],[]],fnames,factory_args,savedir,args)
+                factory_args = [coords, residue, mask, atom_type, center, caption, contact_idx, contact_prob1, collision, contact_scaffold_prob1]
+                import pdb; pdb.set_trace()
+                partial_product = [[],[]]
+                molecular_workflow(0, warehouse, partial_product, fnames, factory_args, savedir,args)
         if all_good_nums>args.gennums or time.time()-start_time>3600*args.max_run_hours:
             break
 
@@ -320,7 +333,7 @@ def main(args):
     cases_dude = get_pdb_files(args.input_list)
     caption_contact = TransformerModel_contact()
     path_model = args.contact_path
-    print(path_model)
+
     dict_ = torch.load(path_model,map_location='cpu')
 
     caption_contact.load_state_dict(dict_,strict=False)
@@ -333,20 +346,21 @@ def main(args):
     caption = nn.DataParallel(caption)
     caption.cuda()
     caption.eval()
-
+    
     args.pocket_path_for_coc = cases_dude[0].split(',')[-1]
-    for i,case in enumerate(cases_dude):
-        print(case,'-'*100)
-
+    for i, case in enumerate(cases_dude):
+        
+        print('-'*30 + case +'-'*30)
+        
         cases = [case]
         name = case.split('/')[-1]
-        print(f'{i} {case} .........................................................')
-        savedir = f'{args.savedir}{args.cuda}/{name}'
-        print(savedir)
+        print(f'processing {i}-th sample {case} ')
+        savedir = f'{args.savedir}/{name}'
+        
         if args.saveMol:
             os.system(f'rm -rf {savedir}')
             os.makedirs(savedir, exist_ok=True)
-
+        
         testset = testdataset(cases)
 
         testloader = DataLoader(dataset=testset,
@@ -354,7 +368,7 @@ def main(args):
                                 shuffle=False,pin_memory=True, num_workers=0)
 
         print("Prep data done", len(testloader))
-        validation(caption_contact,caption, testloader, testset, savedir, args)
+        validation(caption_contact, caption, testloader, testset, savedir, args)
         
 
 if __name__=='__main__':
@@ -368,9 +382,9 @@ if __name__=='__main__':
     parser.add_argument('--contact_path', type=str,default='checkpoint/contact.pkl')
     parser.add_argument('--caption_path', type=str,default='checkpoint/gen_mol.pkl')
     parser.add_argument('--cuda', type=str)
-    parser.add_argument('--coc_dis', type=float, default=2.5)
-    parser.add_argument('--nci_thrs', type=float, default=0.7)
-    parser.add_argument('--topk', type=int, default=5)
+    parser.add_argument('--coc_dis', type=float, help='collision check distance', default=2.5)
+    parser.add_argument('--nci_thrs', type=float,help='nci threshold',  default=0.7)
+    parser.add_argument('--topk', type=int, help='top k contact for generation', default=5)
     parser.add_argument('--max_run_hours', type=int)
     parser.add_argument('--gennums', type=int)
     parser.add_argument('--cuda_list', type=int,nargs='+')
@@ -381,9 +395,9 @@ if __name__=='__main__':
     parser.add_argument('--isMultiSample', action='store_true', default=True)
     parser.add_argument('--isGuideSample', action='store_true', default=True)
     parser.add_argument('--OnceMolGen', action='store_true')
-    parser.add_argument('--gen_frag_set', type=int, default=1)
+    parser.add_argument('--generation_batch', type=int, help='number of generation', default=100)
     parser.add_argument('--prod_time', type=int, default=1)
-    parser.add_argument('--tempture', type=float, default=1.0)
+    parser.add_argument('--tempture', type=float, default=1)
     parser.add_argument('--frag_len_add', type=int, default=0)
     args = parser.parse_args()
     import logging
@@ -396,8 +410,10 @@ if __name__=='__main__':
             logging.info('%s: %s', arg, value)
     main(args)
 
+    smiles2fsmiles_pd = pd.DataFrame(smiles2fsmiles_pd)
+    smiles2fsmiles_pd.to_excel('./smiles2fsmiles_'+ str(time.time()) +'.xlsx')
     if args.cuda == str(args.cuda):
-        with open(args.save_time_path,'a') as f:
-            f.write(args.savedir+','+str(time.time()-start)+'\n')
+        # with open(args.save_time_path,'a') as f:
+        #     f.write(args.savedir+','+str(time.time()-start)+'\n')
         print("alltime is",time.time()-start)
         now = datetime.now(tz)
