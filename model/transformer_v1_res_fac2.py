@@ -12,13 +12,12 @@ import torch
 import torch.nn.functional as F
 import copy
 import numpy as np
-
 from copy import deepcopy
 from model.Module import MLP,MultiHeadedAttention,MultiHeadedAttention_att,MultiHeadedAttentionBias\
     ,PositionwiseFeedForward,PositionalEncoding,EncoderLayer,Encoder,DecoderLayerBias,DecoderBias,edge_vector,cdist
 from concurrent.futures import ThreadPoolExecutor,wait,ALL_COMPLETED
 from multiprocessing import Pool
-from model.transformer_v1_res_mp1 import subsequent_mask, topkp_random, find_root_smi_cur, segment_coords, next_coords
+from model.transformer_v1_res_mp1 import subsequent_mask,topkp_random,find_root_smi_cur,segment_coords,next_coords
 
     
 class TransformerModel(nn.Module):
@@ -28,19 +27,11 @@ class TransformerModel(nn.Module):
         self.src_vocab_size = 12 # 蛋白元素类型 ['C', 'N', 'O', 'S', 'F', 'Cl', 'Se', 'P','Ca','Zn','Centroid']
 
         self.cap_size = 100      # ligand 长度
-        self.tgt_size = 100      # ligand 长度
 
         self.coords_size = 99    # ligand 长度-1
 
         self.h = 8               # 8个head
 
-        self.grid_size = 240     # 蛋白质网格大小
-
-        self.d_model = 512      # 512维度
-
-        self.dropout = dropout   # 0.1
-
-        # Embedding layers
         self.coords_emb = nn.Embedding(240, 128) # 蛋白坐标编码 TODO 历史原因 训练 mapskeleton hopping 所以分开
 
         self.coords_emb_gt = nn.Embedding(240, 128) # ligand 坐标编码
@@ -62,7 +53,7 @@ class TransformerModel(nn.Module):
         self.gt_fea1 = nn.Embedding(gt_vocab_size, 128)
 
 
-        # Edge linear layers
+
         self.linears_edge = MLP(in_features=64, hidden_layer_sizes=[64, 32], out_features=self.h, dropout_p=0.1)
 
         self.linears_edge1 = nn.Linear(self.h, self.h)
@@ -73,7 +64,6 @@ class TransformerModel(nn.Module):
 
         c = copy.deepcopy
 
-        # Attention and Feed Forward layers
         d_model = 512
 
         attn = MultiHeadedAttention(h=8, d_model=d_model)
@@ -84,7 +74,6 @@ class TransformerModel(nn.Module):
 
         ff = PositionwiseFeedForward(d_model=512, d_ff=2048, dropout=dropout)
 
-        # Positional encoding and encoder
         self.pos_encode = PositionalEncoding(d_model, dropout)
         self.encoder_layer = EncoderLayer(d_model, c(attn), c(ff), dropout)
         encoder_layer_num = 3
@@ -115,15 +104,13 @@ class TransformerModel(nn.Module):
         self.proj3_aux = MLP(in_features=3 * d_model + 128, hidden_layer_sizes=[256] * 2, out_features=181, dropout_p=0.1)
         self.proj4_aux = MLP(in_features=4 * d_model + 128, hidden_layer_sizes=[256] * 2, out_features=181, dropout_p=0.1)
 
-        # MLP for predicting local coords
         self.proj2 = MLP(in_features=2*d_model+128,hidden_layer_sizes=[256] * 2,out_features=13, dropout_p=0.1)
         self.proj3 = MLP(in_features=3*d_model+128,hidden_layer_sizes=[256] * 2,out_features=181, dropout_p=0.1)
         self.proj4 = MLP(in_features=4*d_model+128,hidden_layer_sizes=[256] * 2,out_features=181, dropout_p=0.1)
 
-        # MLP for predicting coordinates
-        self.fcx =  MLP(in_features=d_model, hidden_layer_sizes=[256] * 2, out_features=240, dropout_p=0.1)
-        self.fcy = MLP(in_features=d_model+240, hidden_layer_sizes=[256] * 2, out_features=240, dropout_p=0.1)
-        self.fcz = MLP(in_features=d_model+2*240, hidden_layer_sizes=[256] * 2, out_features=240, dropout_p=0.1)
+        self.fcx =  MLP(in_features=d_model,hidden_layer_sizes=[256] * 2,out_features=240, dropout_p=0.1)
+        self.fcy = MLP(in_features=d_model+240,hidden_layer_sizes=[256] * 2,out_features=240, dropout_p=0.1)
+        self.fcz = MLP(in_features=d_model+2*240,hidden_layer_sizes=[256] * 2,out_features=240, dropout_p=0.1)
 
         self.proj_matrix  = MLP(in_features= 8, hidden_layer_sizes=[32] * 2, out_features=11, dropout_p=0.1)
         self.proj_matrix1 = MLP(in_features= 8, hidden_layer_sizes=[32] * 2, out_features=11, dropout_p=0.1)
@@ -136,17 +123,17 @@ class TransformerModel(nn.Module):
         gt_coords_emb  = gt_coords_emb0.reshape(gt_coords_emb0.shape[0], gt_coords_emb0.shape[1], -1)
         new_fea0 = torch.cat([new_fea0_, gt_coords_emb], dim=-1)
         tgt_fea  = self.pos_encode(new_fea0)
-        tgt_mask = subsequent_mask(self.tgt_size).long().cuda()
+        tgt_mask = subsequent_mask(self.cap_size).long().cuda()
         edge_vec_topo = self.relative_emb_topo(gt_coords.float() / 10.0, gt_coords.float() / 10.0)
         dist_sca_topo = self.dist_emb_topo(gt_coords.float() / 10.0, gt_coords.float() / 10.0)
         edge_fea_topo = torch.cat([edge_vec_topo, dist_sca_topo], dim=-1)
         edge_fea_bias_topo = self.linears_edge1_topo(self.linears_edge_topo(edge_fea_topo)).permute(0, 3, 1, 2)
         return new_fea0_, new_fea0, tgt_fea, tgt_mask, edge_fea_bias_topo
-    
-    def forward(self, coords, type, residue, critical_anchor, src_mask, 
-                captions=None, gt_coords=None, smi_map=None, smi_map_n1=None, 
-                smi_map_n2=None, isTrain=True, contact_idx=None, sample_num=1, max_sample_step=100, 
-                isMultiSample=False, USE_THRESHOLD=False, isGuideSample=False, guidepath=None,
+
+    def forward(self, coords, type, residue,critical_anchor,src_mask, 
+                captions=None,gt_coords=None, smi_map=None, smi_map_n1=None, 
+                smi_map_n2=None,isTrain=True, contact_idx=None, sample_num=1, max_sample_step=100, 
+                isMultiSample=False,USE_THRESHOLD=False,isGuideSample=False,guidepath=None,
                 start_this_step=0,OnceMolGen=False,frag_len=0,tempture=1.0):
         
         coords_emb       = self.coords_emb(coords)#这里编码对应的都是蛋白的原子参数饿位置参数，因此对应的都是encoder部分
@@ -161,13 +148,13 @@ class TransformerModel(nn.Module):
 
         critical_anchor_emb = self.anchor_emb(critical_anchor)#编码到128长度
 
-        residue_total_emb       = torch.cat([residue_emb, critical_anchor_emb],dim=-1)#合起来，一共512长度
+        residue_total_emb       = torch.cat([residue_emb,critical_anchor_emb],dim=-1)#合起来，一共512长度
 
         total_feature1 = total_feature+residue_total_emb
 
-        final_fea = self.pos_encode(total_feature1) #pos——enc
-
+        final_fea = self.pos_encode(total_feature1)#pos——enc
         #print(src_mask) 这个就是表示句子长度的mask，估计就是前面有东西的部分是1，后面没有东西了的部分是0
+
         src_mask  = src_mask.unsqueeze(1)
         #before torch.Size([1, 500])
         #after torch.Size([1, 1, 500])
@@ -176,7 +163,8 @@ class TransformerModel(nn.Module):
         src_mask1 = src_mask.repeat(1, src_mask.size(-1), 1)#这样就相当于把所有的为0的行全部mask掉了，也就相当于前面的行都是1，后面的行都是0的一个500*500的mask矩阵
         #final torch.Size([1, 500, 500])
         memory    = self.encoder(final_fea, src_mask1)
-        isTrain   = False
+        
+        isTrain   = True
 
         if isTrain:
             #topo: non bias att
@@ -193,6 +181,13 @@ class TransformerModel(nn.Module):
                 
                 # captions = torch.unsqueeze(torch.tensor([1,4,4,4,4,2] + [0]*94), 0).to('cuda')
                 # gt_coords = torch.cat((torch.randint(low=0,high=239,size=(1,6,3)), torch.zeros((1,94,3), dtype=torch.int64)), dim=1).to('cuda')
+            captions_all = captions.clone()
+            gt_coords_all = gt_coords.clone()
+            smi_map_all = smi_map.clone()
+            smi_map_n1_all = smi_map_n1.clone()
+            smi_map_n2_all = smi_map_n2.clone()
+            
+            import pdb; pdb.set_trace()
             token_mask1 = torch.where(captions == 0, 0, 1).unsqueeze(-1).repeat(1, 1, type.size(1)).to('cuda')
             src_mask2   = src_mask.repeat(1, captions.size(1), 1) * token_mask1
             
@@ -206,7 +201,11 @@ class TransformerModel(nn.Module):
             # cross_label = torch.clamp(torch.sqrt(torch.sum(torch.square(gt_coords[:,1:,None,:]/10.0 - coords[:,None,...]/10.0),dim=-1)),min=0,max=10).long()
 
             # first result: 分子拓扑
-            proj = self.proj(res)
+            proj = self.proj(res[:, i-1])
+            proj = F.softmax(proj/tempture, dim=-1)
+            p_shape = proj.shape
+            proj    = proj.reshape(-1, p_shape[-1])
+            code    = proj.max(dim=-1)[1]
 
             # second part: predict local coords # not using start_o token
             target_type = new_fea0_[:, 1:] # [1, 99, 128]
@@ -284,8 +283,12 @@ class TransformerModel(nn.Module):
             p_coords = torch.stack((x_p, y_p, z_p), dim=-2)
 
             return proj, p_coords, dist_pred, dist_pred_aux, theta_pred, theta_pred_aux, degree_pred, degree_pred_aux
+        
         else:
             with torch.no_grad():
+                
+                
+
                 #print(sample_num) 发现结果为100，应该就是用这个模型生成100个tocken
                 
                 residue      = residue.repeat(sample_num, 1)#residue为[1,500]，应该就是蛋白质上每一个原子的residue，比如hba、hbi之类的参数
@@ -293,15 +296,25 @@ class TransformerModel(nn.Module):
                 
                 residue_mask    = torch.where(residue != 5, 1.0, 0.0)
 
-                coords = coords.repeat(sample_num, 1, 1)#这个coords还是蛋白坐标，torch.Size([1, 500, 3])，表示了蛋白上每个点的坐标
+                coords = coords.repeat(sample_num,1,1)#这个coords还是蛋白坐标，torch.Size([1, 500, 3])，表示了蛋白上每个点的坐标
                 #重复后，变为torch.Size([100, 500, 3])
                 
+                #print(max_sample_step)，结果也是100
                 
                 #最大采样次数，猜测可能是采样多少次，之后从里面选一个好的出来还是啥？
                 src_mask2 = src_mask.repeat(sample_num, max_sample_step, 1)#torch.Size([100, 100, 500]
                 
                 captions  = torch.zeros(src_mask2.shape[0], max_sample_step ).long().cuda()
+                # zhichen
+                dist_list = torch.zeros(src_mask2.shape[0], max_sample_step ).long().cuda()
+                theta_list = torch.zeros(src_mask2.shape[0], max_sample_step ).long().cuda()
+                degree_list = torch.zeros(src_mask2.shape[0], max_sample_step ).long().cuda()
+                root_symbol_dist = torch.zeros(src_mask2.shape[0], max_sample_step ).long().cuda()
+                root_symbol_theta = torch.zeros(src_mask2.shape[0], max_sample_step ).long().cuda()
+                root_symbol_dehe = torch.zeros(src_mask2.shape[0], max_sample_step ).long().cuda()
+                # previous_index = []
 
+                #zhichen
                 star      = torch.zeros(src_mask2.shape[0],max_sample_step).long().cuda()
 
                 gt_coords = torch.zeros(src_mask2.shape[0], max_sample_step , 3).long().cuda()#sample_num估计就是抽样次数，可以抽样100此？
@@ -332,7 +345,7 @@ class TransformerModel(nn.Module):
 
                 new_fea0_ = self.gt_fea1(captions)
                 
-                gt_coords[:,0] =  coords[batch_ind, contact_idx]
+                gt_coords[:,0] =  coords[batch_ind,contact_idx]
 
                 gt_coords_emb0 = self.coords_emb_gt(gt_coords)
 
@@ -359,8 +372,7 @@ class TransformerModel(nn.Module):
                 #开始生成分子
                 for i in range(1, max_sample_step - 1):
                     # import pdb;pdb.set_trace()
-                    # * 1) get FSMILES token using decoder
-                    if (guidepath[1][:,i,:]==-1).all(axis=-1).all(axis=-1) or i>=start_this_step: # 如果没有坐标信息则要走模型预测 first term always False
+                    if (guidepath[1][:,i,:]==-1).all(axis=-1).all(axis=-1) or i>=start_this_step: # 如果没有坐标信息则要走模型预测
                         print(i,'res go model')
                         edge_vec_topo = self.relative_emb_topo(gt_coords.float() / 10.0, gt_coords.float() / 10.0)
 
@@ -369,9 +381,8 @@ class TransformerModel(nn.Module):
                         edge_fea_topo = torch.cat([edge_vec_topo, dist_sca_topo], dim=-1)
 
                         edge_fea_bias_topo = self.linears_edge1_topo(self.linears_edge_topo(edge_fea_topo)).permute(0, 3, 1, 2)
-                        # import pdb; pdb.set_trace()
+                        #print(memory.device)
                         res, _ = self.decoder(tgt_fea, memory, src_mask2, tgt_mask, edge_fea_bias_topo)
-
                         proj_ = self.proj(res[:,i-1])#res是中间decoder层的输出，而proj应该是从decoder层到后面tocken预测层中间的线性层。用它来预测下一个tocken是什么
                         proj1 = F.softmax(proj_/tempture, dim=-1)
                     if isGuideSample and i<start_this_step:
@@ -382,7 +393,7 @@ class TransformerModel(nn.Module):
                         if USE_THRESHOLD:
                             proj1[proj1<0.013] = 0
                         if isMultiSample:
-                            code = torch.multinomial(proj1, 1,).view(-1)
+                            code = torch.multinomial(proj1,1,).view(-1)
                         else:
                             p_shape = proj1.shape
                             proj    = proj1.reshape(-1, p_shape[-1])
@@ -393,24 +404,23 @@ class TransformerModel(nn.Module):
                     isStar = torch.where((code==74)|(code==75),1.0,0.0)
                     star[:,i] = isStar
                     isSep_ind = torch.where(code == 3)
-                    last_sep[isSep_ind] = i # 这个last_seps是每个分子的最后一个分割点的index
+                    last_sep[isSep_ind] = i
                     '''
                     2) first cross att hidden  gt coords hidden with rooted ... get raw coords
                     '''
-                    # * 2) new pred FSMILES token with the above token
-                    
+                    #print(captions.device)
                     gt_c = gt_coords.clone()
-                    gt_c[:, 0] = gt_c[:, 0] * 0 # clear NCI position on the protein
+                    gt_c[:, 0] = gt_c[:, 0] * 0
                     pre_idx, star, is_ele = find_root_smi_cur(captions, i, star)
 
                     ele_mask[:, i] = is_ele
                     root_coords[:, i - 1] = gt_c[batch_ind, pre_idx.long()]
 
-                    smi_map[:, i] = pre_idx.long() # i_th index stores the parent of i_th atom
+                    smi_map[:, i] = pre_idx.long()
 
                     pre_idx_root = smi_map[batch_ind, pre_idx.long()]
 
-                    pre_idx_root = pre_idx_root * is_ele + pre_idx * (1 - is_ele) #
+                    pre_idx_root = pre_idx_root * is_ele + pre_idx * (1 - is_ele)
 
                     smi_map_n1[:, i] = pre_idx_root.long()
                     root_coords_n1[:, i - 1] = gt_c[batch_ind, pre_idx_root.long()]
@@ -429,11 +439,17 @@ class TransformerModel(nn.Module):
                     if (guidepath[1][:,i,:]==-1).all(axis=-1).all(axis=-1) or i>=start_this_step: # 如果没有指引则走模型
                         print(i,'coords go model')
                         gt_coords_emb_rooted = self.coords_emb_gt(root_coords_temp)
+
                         gt_coords_emb_rooted1 = gt_coords_emb_rooted.reshape(gt_coords_emb_rooted.shape[0],
                                                                                 gt_coords_emb_rooted.shape[1], -1)
-                        target_type = self.gt_fea1(captions[:, 1:])
+
+                        type_fea2 = self.gt_fea1(captions[:, 1:])
+
+                        target_type = type_fea2
+
                         new_fea2 = torch.cat([target_type, gt_coords_emb_rooted1], dim=-1)
-                        tgt_fea2 = self.pos_encode(new_fea2) # ligand，生成的小分子的特征向量，做好posenc就可以送入decoder里面运算
+
+                        tgt_fea2 = self.pos_encode(new_fea2)
 
                         src_mask3 = src_mask.repeat(sample_num, captions.size(1) - 1, 1)
 
@@ -451,20 +467,27 @@ class TransformerModel(nn.Module):
 
                         res_aux, _ = self.decoder_relative(tgt_fea2, memory, src_mask3, tgt_mask2, edge_fea_bias, None)
 
+                        #print(tgt_fea2.device)
+                        #print(memory.device)
                         
 
-                        
-                        # * 3) second att with mapskeleton ... get more acc coords
+                        '''
+                        3) second att with mapskeleton ... get more acc coords
+                        '''
+
 
                         '''
                         dist theta degree
                         '''
 
-                        root_idx = smi_map[:, 1:] # omit the start_0 token
+                        root_idx = smi_map[:, 1:]
                         root_root_idx = smi_map_n1[:, 1:]
                         root_root_root_idx = smi_map_n2[:, 1:]
 
-                        new_res  = res[:,:-1] # ? shape unkown [40, 99, 128]
+                        '''
+                        features
+                        '''
+                        new_res  = res[:,:-1]
 
                         root_fea = new_res[batch_ind_total, root_idx]
                         root_root_fea = new_res[batch_ind_total, root_root_idx]
@@ -472,8 +495,7 @@ class TransformerModel(nn.Module):
 
                         feature_dist = torch.cat((target_type, new_res, root_fea), dim=-1)
                         dist_pred = F.softmax(self.proj2_aux(feature_dist), dim=-1)
-                        
-                        dist1 = torch.max(dist_pred, dim=-1)[1]
+                        dist1 = torch.max(dist_pred, dim=-1)[1] # index
                         dist = dist1[:, i - 1]
 
                         feature_theta = torch.cat((target_type, new_res, root_fea, root_root_fea),dim=-1)
@@ -487,12 +509,12 @@ class TransformerModel(nn.Module):
                         # degree1 = torch.max(degree_pred, dim=-1)[1]
                         degree = degree1[:, i - 1]
 
-                       
-                        # * 4) third att with gt ... get final acc coords
-                        
+                        '''
+                        4) third att with gt ... get final acc coords
+                        '''
 
-                        pos_res1 = res_aux + tgt_fea2
-                        
+                        pos_res = res_aux +tgt_fea2
+                        pos_res1 = pos_res
                         x_p_hidden = self.fcx(pos_res1)
                         x_p = F.softmax(x_p_hidden, dim=-1)
 
@@ -504,10 +526,19 @@ class TransformerModel(nn.Module):
                         z_p = F.softmax(self.fcz(y_p_feature), dim=-1)
 
                         gt_coords_pre, seg_coords = segment_coords(gt_coords, last_sep, ele_mask)
+
+                        dist_list[:, i] = dist
+                        theta_list[:, i] = theta
+                        degree_list[:, i] = degree
+                        root_symbol_dist[:, i] = root_idx[:, i-1]
+                        root_symbol_theta[:, i] = root_root_idx[:, i-1]
+                        root_symbol_dehe[:, i] = root_root_root_idx[:, i-1]
+
                         
+                        # cor_start=time.time()
                         if i==1:
 
-                            coords_pred = next_coords(captions=captions, is_ele=is_ele, center_=coords[batch_ind,contact_idx],
+                            coords_pred = next_coords(captions=captions, is_ele=is_ele, center_=coords[batch_ind, contact_idx],
                                                         pre_idx=pre_idx,
                                                         gt_coords_=gt_coords_pre, seg_coords=seg_coords,
                                                         center_pre_=root_coords_n1[:, i - 1],
@@ -522,29 +553,29 @@ class TransformerModel(nn.Module):
                                                         gt_coords_=gt_coords_pre, seg_coords=seg_coords,
                                                         center_pre_=root_coords_n1[:, i - 1],
                                                         center_pre_pre_=root_coords_n2[:, i - 1], dist_=dist,
-                                                        theta_=theta, degree_=degree, x_prod_=x_p[:, i - 1], # 上一个atom的x y z
+                                                        theta_=theta, degree_=degree, x_prod_=x_p[:, i - 1],
                                                         y_prod_=y_p[:, i - 1],
                                                         z_prod_=z_p[:, i - 1], seq_idx=i)
+                            
                     elif isGuideSample and i<start_this_step: # 如果有指导坐标则进行赋值
                         print(i,'-th coords go gudie')
                         coords_pred = torch.from_numpy(guidepath[1][:,i]).long().cuda()
                     
-                    
+                    # print('cor time is ',time.time()-cor_start)
                     gt_coords[:, i] = coords_pred
                     # print(coords_pred[0])
                     gt_coords = gt_coords.long()
 
-                    # type_fea = self.gt_fea1(captions)
+                    new_fea0_ = self.gt_fea1(captions)
 
-                    
-                    # lig_coords_emb = self.coords_emb_gt(gt_coords)
-                    # lig_coords_emb = gt_coords_emb0.reshape(lig_coords_emb.shape[0], lig_coords_emb.shape[1], -1)
+                    # gt_coords_emb0 = self.coords_emb_gt(gt_coords)
+                    gt_coords_emb0 = self.coords_emb_gt(gt_coords)
 
-                    # lig_emb = torch.cat([type_fea, lig_coords_emb], dim=-1)
-                    
-                    # tgt_fea = self.pos_encode(lig_emb)
-                    
-                    if OnceMolGen: # determine the terminal of generation
+                    gt_coords_emb = gt_coords_emb0.reshape(gt_coords_emb0.shape[0], gt_coords_emb0.shape[1], -1)
+                    new_fea0 = torch.cat([new_fea0_, gt_coords_emb], dim=-1)
+                    # print("new",new_fea0.shape,new_fea0)
+                    tgt_fea = self.pos_encode(new_fea0)
+                    if OnceMolGen:
                         if i>=start_this_step:
                             terminal = torch.where((code==2) | (code==0),0,1)
                             isTerminal = terminal*isTerminal
@@ -552,24 +583,25 @@ class TransformerModel(nn.Module):
                             isValidNum[valid_index] = i
                     else:
                         if i>=start_this_step and i<=start_this_step+frag_len: # 观测盲区，只找2
-                            terminal = torch.where((code==2) | (code==0), 0, 1)
+                            terminal = torch.where((code==2) | (code==0),0,1)
                             isTerminal = terminal*isTerminal
-                            valid_index = torch.where(code==2)[0][isValidNum[torch.where(code==2)]==0] # 找到第一个分割点的index
+                            valid_index = torch.where(code==2)[0][isValidNum[torch.where(code==2)]==0]
                             isValidNum[valid_index] = i
                         elif i>start_this_step+frag_len: # 观测区找3
                             terminal = torch.where((code==3) | (code==0),0,1)
                             isTerminal = terminal*isTerminal
-                            valid_index = torch.where(code==3)[0][isValidNum[torch.where(code==3)]==0] # 找到第一个结束点的index
+                            valid_index = torch.where(code==3)[0][isValidNum[torch.where(code==3)]==0]
                             isValidNum[valid_index] = i
 
-                    if torch.sum(isTerminal)==0: # all generation is done for [40] samples
-                        # import pdb; pdb.set_trace()
-                        # np.savez('examples.npz', captions=captions.cpu().numpy(), gt_coords=gt_coords.cpu().numpy(), smi_map=smi_map.cpu().numpy(), smi_map_n1=smi_map_n1.cpu().numpy(), smi_map_n2=smi_map_n2.cpu().numpy())
+                    if torch.sum(isTerminal)==0:
                         break
             isValidNum = isValidNum.cpu().numpy().astype(int)
-            
             mask = (np.arange(100)<=isValidNum[:,np.newaxis]).astype(int)
-            return captions, gt_coords, mask, Value_prob
+
+            local_coords = {'dist_list': dist_list.cpu().data.numpy()*mask, 'theta_list': theta_list.cpu().data.numpy()*mask, 'degree_list': degree_list.cpu().data.numpy()*mask, 
+                            'root_symbol_dist': root_symbol_dist.cpu().data.numpy()*mask, 'root_symbol_theta': root_symbol_theta.cpu().data.numpy()*mask, 'root_symbol_dehe': root_symbol_dehe.cpu().data.numpy()*mask}
+            
+            return captions, gt_coords, mask, Value_prob, local_coords
 
     
 if __name__ == '__main__':
