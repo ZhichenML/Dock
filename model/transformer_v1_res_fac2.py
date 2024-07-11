@@ -123,7 +123,7 @@ class TransformerModel(nn.Module):
         gt_coords_emb  = gt_coords_emb0.reshape(gt_coords_emb0.shape[0], gt_coords_emb0.shape[1], -1)
         new_fea0 = torch.cat([new_fea0_, gt_coords_emb], dim=-1)
         tgt_fea  = self.pos_encode(new_fea0)
-        tgt_mask = subsequent_mask(self.cap_size).long().cuda()
+        tgt_mask = subsequent_mask(captions.shape[1]).long().cuda()
         edge_vec_topo = self.relative_emb_topo(gt_coords.float() / 10.0, gt_coords.float() / 10.0)
         dist_sca_topo = self.dist_emb_topo(gt_coords.float() / 10.0, gt_coords.float() / 10.0)
         edge_fea_topo = torch.cat([edge_vec_topo, dist_sca_topo], dim=-1)
@@ -173,26 +173,44 @@ class TransformerModel(nn.Module):
             if debug == True:
                 
                 tmp = np.load('examples.npz', allow_pickle=True)    
-                captions = torch.tensor(tmp['captions'][0], dtype=torch.int64).to('cuda'); captions = captions.unsqueeze(0)
-                gt_coords = torch.tensor(tmp['gt_coords'][0], dtype=torch.int64).to('cuda'); gt_coords = gt_coords.unsqueeze(0)
-                smi_map = torch.tensor(tmp['smi_map'][0], dtype=torch.int64).to('cuda'); smi_map = smi_map.unsqueeze(0)
-                smi_map_n1 = torch.tensor(tmp['smi_map_n1'][0], dtype=torch.int64).to('cuda'); smi_map_n1 = smi_map_n1.unsqueeze(0)
-                smi_map_n2 = torch.tensor(tmp['smi_map_n2'][0], dtype=torch.int64).to('cuda'); smi_map_n2 = smi_map_n2.unsqueeze(0)
+                captions = torch.tensor(tmp['captions'], dtype=torch.int64).to('cuda'); #captions = captions.unsqueeze(0)
+                gt_coords = torch.tensor(tmp['gt_coords'], dtype=torch.int64).to('cuda'); #gt_coords = gt_coords.unsqueeze(0)
+                smi_map = torch.tensor(tmp['smi_map'], dtype=torch.int64).to('cuda'); #smi_map = smi_map.unsqueeze(0)
+                smi_map_n1 = torch.tensor(tmp['smi_map_n1'], dtype=torch.int64).to('cuda'); #smi_map_n1 = smi_map_n1.unsqueeze(0)
+                smi_map_n2 = torch.tensor(tmp['smi_map_n2'], dtype=torch.int64).to('cuda'); #smi_map_n2 = smi_map_n2.unsqueeze(0)
                 
                 # captions = torch.unsqueeze(torch.tensor([1,4,4,4,4,2] + [0]*94), 0).to('cuda')
                 # gt_coords = torch.cat((torch.randint(low=0,high=239,size=(1,6,3)), torch.zeros((1,94,3), dtype=torch.int64)), dim=1).to('cuda')
-            captions_all = captions.clone()
-            gt_coords_all = gt_coords.clone()
-            smi_map_all = smi_map.clone()
-            smi_map_n1_all = smi_map_n1.clone()
-            smi_map_n2_all = smi_map_n2.clone()
+            # captions_all = captions.clone()
+            # gt_coords_all = gt_coords.clone()
+            # smi_map_all = smi_map.clone()
+            # smi_map_n1_all = smi_map_n1.clone()
+            # smi_map_n2_all = smi_map_n2.clone()
             
-            import pdb; pdb.set_trace()
+            # # for i in range(2, captions_all.size(1)):
+            # captions = torch.zeros_like(captions_all)
+            # gt_coords = torch.zeros_like(gt_coords_all)
+            # smi_map = torch.zeros_like(smi_map_all)
+            # smi_map_n1 = torch.zeros_like(smi_map_n1_all)
+            # smi_map_n2 = torch.zeros_like(smi_map_n2_all)
+
+            # captions[:, :i] = captions_all[:, :i]
+            # gt_coords[:, :i] = gt_coords_all[:, :i]
+            # smi_map[:, :i] = smi_map_all[:, :i]
+            # smi_map_n1[:, :i] = smi_map_n1_all[:, :i]
+            # smi_map_n2[:, :i] = smi_map_n2_all[:, :i]
+            
+            captions = captions[:, :-1]
+            gt_coords = gt_coords[:, :-1]
+            smi_map = smi_map[:, :-1]
+            smi_map_n1 = smi_map_n1[:, :-1]
+            smi_map_n2 = smi_map_n2[:, :-1]
             token_mask1 = torch.where(captions == 0, 0, 1).unsqueeze(-1).repeat(1, 1, type.size(1)).to('cuda')
             src_mask2   = src_mask.repeat(1, captions.size(1), 1) * token_mask1
             
             new_fea0_, new_fea0, tgt_fea, tgt_mask, edge_fea_bias_topo = self.prepare_topo_tensors(captions, gt_coords)
-            
+            memory = memory.repeat(sample_num, 1, 1)
+            import pdb; pdb.set_trace()
             res, att            = self.decoder(tgt_fea, memory, src_mask2, tgt_mask, edge_fea_bias_topo)
 
             #cross attention map constrain
@@ -201,10 +219,10 @@ class TransformerModel(nn.Module):
             # cross_label = torch.clamp(torch.sqrt(torch.sum(torch.square(gt_coords[:,1:,None,:]/10.0 - coords[:,None,...]/10.0),dim=-1)),min=0,max=10).long()
 
             # first result: 分子拓扑
-            proj = self.proj(res[:, i-1])
+            proj = self.proj(res)
             proj = F.softmax(proj/tempture, dim=-1)
-            p_shape = proj.shape
-            proj    = proj.reshape(-1, p_shape[-1])
+            
+            proj    = proj.reshape(-1, proj.shape[-1])
             code    = proj.max(dim=-1)[1]
 
             # second part: predict local coords # not using start_o token
@@ -371,7 +389,7 @@ class TransformerModel(nn.Module):
                 batch_ind_total = batch_ind_total.long()
                 #开始生成分子
                 for i in range(1, max_sample_step - 1):
-                    # import pdb;pdb.set_trace()
+                    
                     if (guidepath[1][:,i,:]==-1).all(axis=-1).all(axis=-1) or i>=start_this_step: # 如果没有坐标信息则要走模型预测
                         print(i,'res go model')
                         edge_vec_topo = self.relative_emb_topo(gt_coords.float() / 10.0, gt_coords.float() / 10.0)
@@ -382,6 +400,7 @@ class TransformerModel(nn.Module):
 
                         edge_fea_bias_topo = self.linears_edge1_topo(self.linears_edge_topo(edge_fea_topo)).permute(0, 3, 1, 2)
                         #print(memory.device)
+                        import pdb; pdb.set_trace() 
                         res, _ = self.decoder(tgt_fea, memory, src_mask2, tgt_mask, edge_fea_bias_topo)
                         proj_ = self.proj(res[:,i-1])#res是中间decoder层的输出，而proj应该是从decoder层到后面tocken预测层中间的线性层。用它来预测下一个tocken是什么
                         proj1 = F.softmax(proj_/tempture, dim=-1)
