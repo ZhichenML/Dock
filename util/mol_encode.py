@@ -30,10 +30,10 @@ class FragmolUtil():
 
         self.vocab_c2i_v1 = {self.vocab_i2c_v1[i]: i for i in self.vocab_i2c_v1}
 
-        self.vocab_list_decode = ["pad", "start", "end", "sep",
-                                  "C", "c", "N", "n", "S", "s", "O", "o",
-                                  "F",
-                                  "Cl", "[nH]", "Br",
+        self.vocab_list_decode = ["pad", "start", "end", "sep", #3
+                                  "C", "c", "N", "n", "S", "s", "O", "o", # 11
+                                  "F", ## 12
+                                  "Cl", "[nH]", "Br", # 15
                                   "/", "\\", "@", "@@", "H",  # W for @， V for @@
                                   # "Cl", "[nH]", "Br", # "X", "Y", "Z", for origin
                                   "1", "2", "3", "4", "5", "6",
@@ -187,7 +187,7 @@ class FragmolUtil():
                     rooted_idx = atom.GetIdx()
                     break
 
-        smi = Chem.MolToSmiles(final_frag, rootedAtAtom=rooted_idx)
+        smi = Chem.MolToSmiles(final_frag, rootedAtAtom=rooted_idx); 
         r_order1 = final_frag.GetPropsAsDict(includePrivate=True, includeComputed=True)['_smilesAtomOutputOrder']
         rorder_model1 = Chem.RenumberAtoms(final_frag, r_order1)
 
@@ -307,7 +307,7 @@ class FragmolUtil():
                 neighbors.extend(neighbor)
                 orig_indices.extend(orig_ind)
                 final_frags.append(frag_)
-
+                
                 for n in new_next_:
                     if sorted(n) not in pre_v and sorted(n) not in next_:
 
@@ -358,7 +358,7 @@ class FragmolUtil():
         final = [1]
         try:
             notfinish_flag = False
-            for i,sstring in enumerate(res):
+            for i, sstring in enumerate(res):
                 sstring = sstring.replace("Cl", "X").replace("[nH]", "Y").replace("Br", "Z")
                 sstring = sstring.replace("@@", "V")
                 sstring = sstring.replace("([*])","L")
@@ -379,7 +379,6 @@ class FragmolUtil():
                 smi +=[3]
                 final.extend(smi)
                 
-
             if not notfinish_flag:
                 final.extend([2])
             
@@ -631,7 +630,7 @@ class FragmolUtil():
         return True
 
     def get_atom_type_frag(self, mol, res):
-
+        # set FSMILES number of ring environment, o and ring size is legal, others like -1 means illegal
         try:
             smi = Chem.MolToSmiles(mol)
 
@@ -736,7 +735,7 @@ class FragmolUtil():
         return deepcopy(atom_type)
 
 
-    def atom_type(self, sstring, frags,reses):
+    def atom_type(self, sstring, frags, reses):
         
         result = []
         for i,mol in enumerate(frags):
@@ -784,7 +783,7 @@ class FragmolUtil():
         return new_sstring1
 
     def recode_coords(self,new_code,new_position):
-
+        # 去掉超出范围的点
         idx = len(new_code)
 
         for i in range(len(new_position)):
@@ -803,13 +802,77 @@ class FragmolUtil():
 
         return new_code,new_position
 
+    def encode_gaff2(self, res, gaff2_type):
+        
+        final = ['start']
+        idx = 0 # for scanning gaff2_type
+        try:
+            notfinish_flag = False
+            for i, sstring in enumerate(res):
+                sstring = sstring.replace("Cl", "X").replace("[nH]", "Y").replace("Br", "Z")
+                sstring = sstring.replace("@@", "V")
+                sstring = sstring.replace("([*])","L")
+                sstring = sstring.replace("[*]","M")
+
+                smi = []
+                flag = False
+                for xchar in sstring:
+                    
+                    if xchar in self.vocab_c2i_v1.keys():
+                        if self.vocab_c2i_v1[xchar] in self.ele_token:
+                            smi.append(gaff2_type[idx])
+                            idx += 1
+                        else:
+                            smi.append(xchar)
+                    else:
+                        flag = True
+                        break
+                if flag:
+                    notfinish_flag = True
+                    break
+                smi +=['sep']
+                final.extend(smi)
+                
+            if not notfinish_flag:
+                final.extend(['end'])
+
+            for ind, s in enumerate(final):
+                if final[ind] in ["X", "Y", "Z", "V", "L", "M"]:
+                    if final[ind] == "X":
+                        final[ind] = "Cl"
+                    elif final[ind] == "Y":
+                        final[ind] = "[nH]"
+                    elif final[ind] == "Z":
+                        final[ind] = "Br"
+                    elif final[ind] == "V":
+                        final[ind] = "@@"
+                    elif final[ind] == "L":
+                        final[ind] = "([*])"
+                    elif final[ind] == "M":
+                        final[ind] = "[*]"
+                    else:
+                        raise 'invalid gaff2 type'
+
+            smile = final + (self.encode_length - len(final)) * [0]
+            if len(final)==1:
+                raise 'invalid encode mol'
+            return smile[:self.encode_length]
+        except Exception as e:
+            print(f'there is an exception {e}')
+            return None
+        
+
+
     def encode_mol(self, mol, center=None, rrot=None):
-        mol = Chem.SDMolSupplier(mol)[0]
+        # mol = Chem.SDMolSupplier(mol)[0]
         resolution = self.resolution
         length = int(24 / resolution)
         grid_c = (length - 1) / 2
-        
+        mol = self.mol_with_atom_index(mol)
+
         res, positions, neighbor, orig_ind, frags = self.flatten_seq(mol)
+
+        # 处理坐标
         if rrot is not None:
             positions = self.rotate(positions, rrot, center=center)
         if center is None:
@@ -817,12 +880,25 @@ class FragmolUtil():
         new_pdb_coords1 = (np.array(positions) - center) / resolution + np.array([grid_c, grid_c, grid_c])
         ll1 = np.rint(new_pdb_coords1).astype('int')
         
-        code = self.encode(res)
+
+        with open(f'test_37/{mol_name}.ac') as f1:
+            gaff2_type = np.array([line.split()[-1] for line in f1.readlines() if line.startswith('ATOM') and line.split()[-1][0]!='h' ])
+        gaff2_type = gaff2_type[orig_ind]
+
+        gaff2_rep = self.encode_gaff2(res, gaff2_type)
         
+        
+        code = self.encode(res) 
+        order_orig = [mol.GetAtomWithIdx(i).GetSymbol() for i in range(mol.GetNumAtoms())]
+        # order_frag_ind = [int(atom.GetProp('atomNum')) for frag in frags for atom in frag.GetAtoms() ] # the same as below
+        order_frag = [frag.GetAtomWithIdx(i).GetSymbol() for frag in frags for i in range(frag.GetNumAtoms()) ] # the same as below
+        type_after_frag = [self.vocab_i2c_v1[v] for v in code if v in self.ele_token]
+
         atom_type = self.atom_type(code, frags, res)
         new_code = self.recode(code, atom_type)
-
-        smi_map,smi_map_n1,smi_map_n2 = find_root_smi(code)
+       
+        
+        smi_map, smi_map_n1, smi_map_n2 = find_root_smi(code)
         new_position = self.generate_coords(code, ll1, smi_map)
         neighbor_positoins, neighbor_positoins_n1, neighbor_positoins_n2 = self.idxSMIMap(smi_map,smi_map_n1,smi_map_n2, new_position)
 
@@ -836,9 +912,9 @@ class FragmolUtil():
         degree = self.plane_degree(neighbor_positoins, neighbor_positoins_n1, neighbor_positoins_n2, new_position)
         degree = np.clip(np.rint(degree).astype('int'), a_min=0, a_max=180)
 
-        new_code1,new_position1 = self.recode_coords(new_code,new_position)
+        new_code1,new_position1 = self.recode_coords(new_code,new_position) 
 
-        return new_code1, new_position1, smi_map, smi_map_n1, smi_map_n2, theta, new_dist, degree  # ,smi_map,smi_map_n1,smi_map_n2,
+        return gaff2_rep, new_code1, new_position1, smi_map, smi_map_n1, smi_map_n2, theta, new_dist, degree  # ,smi_map,smi_map_n1,smi_map_n2,
 
     def mergeSmi(self, rwmol, smi, uuid):
 
@@ -1050,14 +1126,16 @@ def draw_mol_with_index(mol, fig_name='test_mol.png'):
     mol_with_indices = Chem.MolFromSmiles(Chem.MolToSmiles(mol, canonical=False)) # prepare for drawing
     Draw.MolToFile(mol_with_indices, fig_name, size=(500, 500), kekulize=True, wedgeBonds=True)
 
-def draw_molecule_with_custom_labels(mol, token_order, dist_label, theta_label, degree_label, fig_name):
+def draw_molecule_with_custom_labels(mol, token_order, rep, dist_label, theta_label, degree_label, fig_name):
     fragutil = FragmolUtil()
-    for atom in mol.GetAtoms():atom.SetProp('molAtomMapNumber', str(atom.GetIdx())) # set
-    mol = Chem.MolFromSmiles(Chem.MolToSmiles(mol, canonical=False))
+    # for atom in mol.GetAtoms():atom.SetProp('molAtomMapNumber', str(atom.GetIdx())) # set
+    # mol = Chem.MolFromSmiles(Chem.MolToSmiles(mol, canonical=False))
+    
     label_dict = {}
-    for i, t in enumerate(token_order):
-        label_dict[t] = f"{dist_label[i]}"
-        # label_dict[t] = f"{fragutil.dist_grid_inv[dist_label[i]]/10},{theta_label[i]},{degree_label[i]}"
+    for i, t in enumerate(token_order): # 外面已经renumber过mol，所有mol现在的顺序就是生成顺序，rep也是生成顺序
+        cur_atom_symbol = mol.GetAtomWithIdx(i).GetSymbol()
+        label_dict[i] = f"{rep[i]}"#,{i},{cur_atom_symbol},{fragutil.dist_grid_inv[dist_label[i]]/10},{theta_label[i]},{degree_label[i]}"
+    
     # Set custom properties for each atom
     for atom in mol.GetAtoms():
         idx = atom.GetIdx()
@@ -1075,6 +1153,7 @@ def draw_molecule_with_custom_labels(mol, token_order, dist_label, theta_label, 
 
     # Draw the molecule with custom atom labels
     # Create a drawing object
+    AllChem.Compute2DCoords(mol)
     drawer = Draw.MolDraw2DCairo(500, 500)  # width, height in pixels
     opts = drawer.drawOptions()
 
@@ -1093,15 +1172,25 @@ def draw_molecule_with_custom_labels(mol, token_order, dist_label, theta_label, 
 
     print(f"Molecule image saved to {image_file}")
 
+def get_atom_type(mol_name):
+    # os.system(f'atomtype -i test_37/{mol_name}.mol2 -o test_37/{mol_name}.ac -f mol2 -p gaff2')
+    with open(f'test_37/{mol_name}.ac') as f1:
+        atom_type = [line.split()[-1] for line in f1.readlines() if line.startswith('ATOM') and line.split()[-1][0]!='h' ]
+    return atom_type
+
 if __name__ == '__main__':
 
     fragUtil = FragmolUtil()
-    name = '37_mol.sdf'
-    mol = Chem.SDMolSupplier(name)[0]
-    mol = fragUtil.mol_with_atom_index(mol)
-    print('SMILES with Idx: ', Chem.MolToSmiles(mol))
-    print('SMILES without Idx: ', Chem.MolToSmiles(fragUtil.remove_atom_index(mol)))
-
+    
+    name = 'Compound_21697.sdf'; mol_name = name.split('.')[0]
+    mol2name = f'test_37/{mol_name}.mol2'
+    with open(f'test_37/{mol_name}.ac') as f1:
+        atom_type = [line.split()[-1] for line in f1.readlines() if line.startswith('ATOM') and line.split()[-1][0]!='h' ]
+    
+    
+    # mol = Chem.SDMolSupplier(name)[0]
+    mol = Chem.MolFromMol2File(mol2name, sanitize=False)
+    mol = Chem.RemoveHs(mol)
 
     res, positions, neighbor, orig_ind, frags = fragUtil.flatten_seq(mol)
     print('fragments SMILES', res)
@@ -1109,27 +1198,31 @@ if __name__ == '__main__':
     print('fragments neighbor', neighbor)
     print('fragments orig_ind', orig_ind)
     print('fragments frags', frags)
-
     
-    code, new_position, neighbor_positoins, neighbor_positoins_n1, neighbor_positoins_n2, theta, new_dist, degree = fragUtil.encode_mol(
-        'input.sdf', center=np.array([0, 0, 0]))
     
-    dist_label, theta_label, degree_label = [],[],[]
-    fsmiles = []
-    atom_num=0
-    for i, r in enumerate(zip(code, new_position, neighbor_positoins, neighbor_positoins_n1,neighbor_positoins_n2, new_dist, theta,  degree)):
-
-        print(i,fragUtil.vocab_i2c_v1_decode_new[code[i]],  r,new_dist[i],theta[i],degree[i])
-        fsmiles.append(fragUtil.vocab_i2c_v1_decode_new[code[i]])
-        if code[i] in range(4,56):
-            dist_label.append([atom_num, fragUtil.vocab_i2c_v1_decode_new[code[i]]])
-            theta_label.append('')
-            degree_label.append('')
-            atom_num+=1
-            # dist_label.append(new_dist[i])
-            # theta_label.append(theta[i])
-            # degree_label.append(degree[i])
-    print(dist_label)
-    token_order = [0, 1, 2, 3, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 30, 31, 17, 18, 19, 25, 26, 27, 28, 29, 20, 21, 22, 23, 24, 4, 5, 6]
-    draw_molecule_with_custom_labels(mol, token_order, dist_label, theta_label, degree_label, name.replace('.sdf', '_with_custom_labels.png'))
+    gaff2_rep, fsmi_code, new_position, neighbor_positoins, neighbor_positoins_n1, neighbor_positoins_n2, theta, new_dist, degree = fragUtil.encode_mol(
+        mol, center=np.array([0, 0, 0]))
+    assert(len([1 for v in fsmi_code if v !=0])==sum(np.where(new_position[:,0]==0,0,1))+3)
+    mol = Chem.RenumberAtoms(mol, orig_ind)
     draw_mol_with_index(mol, name.replace('.sdf', '_with_index.png'))
+
+    dist_label, theta_label, degree_label = [],[],[]
+    fsmiles_element = []
+    gaff2_element = []
+    atom_num=0
+    tmp = np.array([[fragUtil.vocab_i2c_v1_decode_new[fsmi_code[i]], gaff2_rep[i], new_dist[i], theta[i], degree[i]] for i in range(len(fsmi_code))])
+    print(tmp)
+    
+    for i, r in enumerate(zip(gaff2_rep, fsmi_code, new_position, neighbor_positoins, neighbor_positoins_n1,neighbor_positoins_n2, new_dist, theta,  degree)):
+        
+        if fsmi_code[i] in range(4,56):
+            fsmiles_element.append([atom_num, fragUtil.vocab_i2c_v1_decode_new[fsmi_code[i]]])
+            gaff2_element.append([atom_num, gaff2_rep[i]])
+            atom_num+=1
+            dist_label.append(new_dist[i])
+            theta_label.append(theta[i])
+            degree_label.append(degree[i])
+    
+    token_label = orig_ind
+    draw_molecule_with_custom_labels(mol, token_label, gaff2_element, dist_label, theta_label, degree_label, name.replace('.sdf', '_with_custom_labels.png'))
+    draw_molecule_with_custom_labels(mol, token_label, range(mol.GetNumAtoms()), dist_label, theta_label, degree_label, name.replace('.sdf', '_with_order_labels.png'))
